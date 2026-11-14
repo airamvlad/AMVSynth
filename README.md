@@ -43,4 +43,6 @@ The results are in `build/AMVSynth_artefacts/Release`.
 - `Source/PluginProcessor.*`: the plugin itself
 - `Source/PluginEditor.*`: the interface
 
-Built with [JUCE](https://juce.com).
+## License
+
+AMVSynth is free software, released under the [GNU Affero General Public License v3](LICENSE). It is built with [JUCE](https://juce.com), which is used here under the same license.
