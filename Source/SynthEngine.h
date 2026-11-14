@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include "Tuning.h"
+#include "Wavetables.h"
 
 #include <algorithm>
 #include <array>
@@ -30,10 +31,31 @@ enum class Ornament
     trill
 };
 
+/** One wavetable oscillator. */
+struct OscParams
+{
+    int table = 0;
+    float position = 0.0f;     // 0..1 through the frames of the table
+    int unison = 1;            // 1..7 stacked copies
+    float detuneCents = 18.0f; // spread of the outermost copies
+    float pitch = 0.0f;        // semitones
+    float fineCents = 0.0f;
+    float level = 0.0f;
+};
+
 /** Values read from the plugin parameters once per audio block. */
 struct EngineParams
 {
     Model model = Model::juzniVetar;
+    float engineLevel = 1.0f;  // level of the Balkan model in the mixer
+
+    // Wavetable oscillators, sub oscillator and noise, mixed with the model before the filter
+    OscParams oscA, oscB;
+    float subLevel = 0.0f;
+    int subOctave = 1;         // octaves below the note: 1 or 2
+    float subShape = 0.0f;     // 0 = sine, 1 = square
+    float noiseLevel = 0.0f;
+    float noiseColorHz = 6000.0f;
 
     // Juzni Vetar lead
     float tone = 0.55f;        // 0 = detuned saws, 1 = pulse
@@ -135,6 +157,15 @@ public:
         {
             filter.reset();
             phases = { 0.0f, 0.37f, 0.71f, 0.13f, 0.52f };
+            for (auto* osc : { &oscPhasesA, &oscPhasesB })
+            {
+                // The first copy always starts at zero so a single oscillator has a repeatable attack.
+                for (auto& ph : *osc)
+                    ph = random.nextFloat();
+                (*osc)[0] = 0.0f;
+            }
+            subPhase = 0.0f;
+            noiseLp = 0.0f;
             reedLp = 0.0f;
             clickLp = 0.0f;
             clickHp = 0.0f;
@@ -192,7 +223,18 @@ public:
         filter.setResonance (0.5f + p.resonance * p.resonance * 9.0f);
 
         ModelCoeffs mc;
-        prepareModel (mc, p, sr);
+        if (p.engineLevel > 0.0f)
+            prepareModel (mc, p, sr);
+
+        const float chunkInc = midiToHz (currentPitch + bend + 1.0f) / sr;
+        OscCoeffs oscA, oscB;
+        prepareOsc (oscA, p.oscA, chunkInc);
+        prepareOsc (oscB, p.oscB, chunkInc);
+
+        const bool subOn = p.subLevel > 0.0f, noiseOn = p.noiseLevel > 0.0f;
+        const bool extras = oscA.on || oscB.on || subOn;
+        const float subRatio = p.subOctave >= 2 ? 0.25f : 0.5f;
+        const float noiseCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (p.noiseColorHz, 0.45f * sr) / sr);
 
         const float fallDepth = fall ? p.ornAmount * 3.0f : 0.0f;
         const float fallTime = juce::jlimit (0.04f, 0.4f, p.amp.release);
@@ -218,14 +260,43 @@ public:
             }
 
             float s = 0.0f;
-            switch (p.model)
+            if (p.engineLevel > 0.0f)
             {
-                case Model::juzniVetar: s = renderLead (pitch, sr, p, mc); break;
-                case Model::accordion:  s = renderAccordion (pitch, sr, mc); break;
-                case Model::gusle:      s = renderGusle (pitch, sr, p, mc); break;
-                case Model::frula:      s = renderPipe (pitch, sr, p, mc, false); break;
-                case Model::kaval:      s = renderPipe (pitch, sr, p, mc, true); break;
-                case Model::gajde:      s = renderGajde (pitch, sr, p, mc); break;
+                switch (p.model)
+                {
+                    case Model::juzniVetar: s = renderLead (pitch, sr, p, mc); break;
+                    case Model::accordion:  s = renderAccordion (pitch, sr, mc); break;
+                    case Model::gusle:      s = renderGusle (pitch, sr, p, mc); break;
+                    case Model::frula:      s = renderPipe (pitch, sr, p, mc, false); break;
+                    case Model::kaval:      s = renderPipe (pitch, sr, p, mc, true); break;
+                    case Model::gajde:      s = renderGajde (pitch, sr, p, mc); break;
+                }
+
+                s *= p.engineLevel;
+            }
+
+            if (extras)
+            {
+                const float inc = midiToHz (pitch) / sr;
+
+                if (oscA.on)
+                    s += renderOsc (oscPhasesA, oscA, inc);
+                if (oscB.on)
+                    s += renderOsc (oscPhasesB, oscB, inc);
+
+                if (subOn)
+                {
+                    const float subInc = inc * subRatio;
+                    const float sine = std::sin (subPhase * juce::MathConstants<float>::twoPi);
+                    s += (sine + (pulse (subPhase, subInc, 0.5f) * 0.7f - sine) * p.subShape) * p.subLevel * 0.8f;
+                    advance (subPhase, subInc);
+                }
+            }
+
+            if (noiseOn)
+            {
+                noiseLp += (noise() - noiseLp) * noiseCoeff;
+                s += noiseLp * p.noiseLevel * 0.7f;
             }
 
             s = filter.processSample (0, s);
@@ -275,6 +346,71 @@ private:
         float gains[5] {};     // low, mid, mid sharp, mid flat, high
         float musette = 0.0f, reedLpCoeff = 1.0f, reedLevel = 1.0f, clickLevel = 0.0f, clickDecay = 0.0f;
     };
+
+    static constexpr int maxUnison = 7;
+    using OscPhases = std::array<float, maxUnison>;
+
+    struct OscCoeffs
+    {
+        bool on = false;
+        int count = 1;
+        const float* waveA = nullptr; // the two frames around the position
+        const float* waveB = nullptr;
+        float frameMix = 0.0f, gain = 0.0f;
+        float ratio[maxUnison] {};    // frequency of each copy relative to the note
+    };
+
+    /** `noteInc` is the phase increment of the note itself, with a little headroom. */
+    static void prepareOsc (OscCoeffs& oc, const OscParams& op, float noteInc)
+    {
+        oc.on = op.level > 0.0f;
+        if (! oc.on)
+            return;
+
+        oc.count = juce::jlimit (1, maxUnison, op.unison);
+        const float offset = op.pitch + op.fineCents * 0.01f;
+        float highest = 0.0f;
+
+        for (int i = 0; i < oc.count; ++i)
+        {
+            const float spread = oc.count > 1 ? 2.0f * (float) i / (float) (oc.count - 1) - 1.0f : 0.0f;
+            oc.ratio[i] = std::exp2 ((offset + spread * op.detuneCents * 0.01f) / 12.0f);
+            highest = juce::jmax (highest, oc.ratio[i]);
+        }
+
+        const auto& bank = WavetableBank::get();
+        const int table = juce::jlimit (0, WavetableBank::numTables - 1, op.table);
+        const int level = WavetableBank::levelFor (noteInc * highest);
+        const float framePos = juce::jlimit (0.0f, 1.0f, op.position) * (float) (WavetableBank::numFrames - 1);
+        const int frame = juce::jmin ((int) framePos, WavetableBank::numFrames - 2);
+
+        oc.waveA = bank.wave (table, frame, level);
+        oc.waveB = bank.wave (table, frame + 1, level);
+        oc.frameMix = framePos - (float) frame;
+        oc.gain = op.level * 0.75f / std::sqrt ((float) oc.count);
+    }
+
+    static float renderOsc (OscPhases& phases, const OscCoeffs& oc, float inc) noexcept
+    {
+        float sum = 0.0f;
+
+        for (int i = 0; i < oc.count; ++i)
+        {
+            float& phase = phases[(size_t) i];
+            const float pos = phase * (float) WavetableBank::tableSize;
+            const int index = juce::jmin ((int) pos, WavetableBank::tableSize - 1);
+            const float frac = pos - (float) index;
+            const float a = oc.waveA[index] + (oc.waveA[index + 1] - oc.waveA[index]) * frac;
+            const float b = oc.waveB[index] + (oc.waveB[index + 1] - oc.waveB[index]) * frac;
+            sum += a + (b - a) * oc.frameMix;
+
+            phase += inc * oc.ratio[i];
+            if (phase >= 1.0f)
+                phase -= 1.0f;
+        }
+
+        return sum * oc.gain;
+    }
 
     void setNote (const NoteEvent& e)
     {
@@ -579,6 +715,9 @@ private:
     float reedLp = 0.0f, clickEnv = 0.0f, clickLp = 0.0f, clickHp = 0.0f;
     float slowNoise = 0.0f, fastNoise = 0.0f;
     std::array<Band, 3> bands;
+
+    OscPhases oscPhasesA {}, oscPhasesB {};
+    float subPhase = 0.0f, noiseLp = 0.0f;
 };
 
 /** Voice allocation, tuning, ornaments, MIDI handling and rendering. */
@@ -676,7 +815,7 @@ private:
     void renderDrone (float* out, int numSamples, bool anyHeld)
     {
         const float sr = engineSampleRate;
-        const float target = anyHeld ? params.macro[0] * 0.3f : 0.0f;
+        const float target = anyHeld ? params.macro[0] * 0.3f * params.engineLevel : 0.0f;
         if (target <= 0.0f && droneLevel < 1.0e-5f)
         {
             droneLevel = 0.0f;

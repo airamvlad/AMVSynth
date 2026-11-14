@@ -172,8 +172,34 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     addSection ("FILTER ENV", false, 3, 4.4f).knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
     addSection ("OUT", false, 3, 1.4f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
 
-    // FX page.
+    // OSC page: two wavetable oscillators, sub, noise and the level of the Balkan engine.
     buildingPage = 1;
+    {
+        auto& s = addSection ("OSC A", false, 0, 1.0f);
+        s.column.push_back (&makeChoice (id::oscATable, false)->box);
+        s.display = &waveA;
+        s.knobs = makeKnobs (false, { { id::oscAPos, "POSITION" }, { id::oscAUnison, "UNISON" }, { id::oscADetune, "DETUNE" },
+                                      { id::oscAPitch, "PITCH" }, { id::oscAFine, "FINE" }, { id::oscALevel, "LEVEL" } });
+        addChildComponent (waveA);
+    }
+    {
+        auto& s = addSection ("OSC B", false, 1, 1.0f);
+        s.column.push_back (&makeChoice (id::oscBTable, false)->box);
+        s.display = &waveB;
+        s.knobs = makeKnobs (false, { { id::oscBPos, "POSITION" }, { id::oscBUnison, "UNISON" }, { id::oscBDetune, "DETUNE" },
+                                      { id::oscBPitch, "PITCH" }, { id::oscBFine, "FINE" }, { id::oscBLevel, "LEVEL" } });
+        addChildComponent (waveB);
+    }
+    {
+        auto& s = addSection ("SUB", false, 2, 4.0f);
+        s.column.push_back (&makeChoice (id::subOctave, false)->box);
+        s.knobs = makeKnobs (false, { { id::subShape, "SHAPE" }, { id::subLevel, "LEVEL" } });
+    }
+    addSection ("NOISE", false, 2, 3.0f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
+    addSection ("BALKAN ENGINE", true, 2, 2.0f).knobs = makeKnobs (true, { { id::engineLevel, "LEVEL" } });
+
+    // FX page.
+    buildingPage = 2;
     {
         auto& s = addSection ("DISTORTION", false, 0, 4.0f);
         s.column.push_back (&makeToggle (id::distOn, "ON", false)->button);
@@ -206,18 +232,20 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
     buildingPage = 0;
 
-    for (auto* tab : { &synthTab, &fxTab })
+    const char* tabNames[] { "SYNTH", "OSC", "FX" };
+    for (size_t i = 0; i < tabs.size(); ++i)
     {
-        tab->setClickingTogglesState (false);
-        tab->setColour (juce::TextButton::buttonColourId, colour::header);
-        tab->setColour (juce::TextButton::buttonOnColourId, colour::track);
-        tab->setColour (juce::TextButton::textColourOffId, colour::dimText);
-        tab->setColour (juce::TextButton::textColourOnId, colour::text);
-        addAndMakeVisible (*tab);
+        auto& tab = tabs[i];
+        tab.setButtonText (tabNames[i]);
+        tab.setClickingTogglesState (false);
+        tab.setColour (juce::TextButton::buttonColourId, colour::header);
+        tab.setColour (juce::TextButton::buttonOnColourId, colour::track);
+        tab.setColour (juce::TextButton::textColourOffId, colour::dimText);
+        tab.setColour (juce::TextButton::textColourOnId, colour::text);
+        tab.onClick = [this, i] { setPage ((int) i); };
+        addAndMakeVisible (tab);
     }
-    synthTab.onClick = [this] { setPage (0); };
-    fxTab.onClick = [this] { setPage (1); };
-    synthTab.setToggleState (true, juce::dontSendNotification);
+    tabs[0].setToggleState (true, juce::dontSendNotification);
 
     keyboard.setAvailableRange (36, 96);
     keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, colour::red);
@@ -317,8 +345,8 @@ void AMVSynthAudioProcessorEditor::showModel (int index)
 void AMVSynthAudioProcessorEditor::setPage (int page)
 {
     currentPage = page;
-    synthTab.setToggleState (page == 0, juce::dontSendNotification);
-    fxTab.setToggleState (page == 1, juce::dontSendNotification);
+    for (size_t i = 0; i < tabs.size(); ++i)
+        tabs[i].setToggleState ((int) i == page, juce::dontSendNotification);
     resized();
     updateVisibility();
     repaint();
@@ -335,7 +363,9 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
         t->button.setVisible (false);
     for (auto& c : choices)
         c->box.setVisible (false);
-    patternDisplay.setVisible (false);
+    for (auto& s : sections)
+        if (s.display != nullptr)
+            s.display->setVisible (false);
 
     for (auto& s : sections)
     {
@@ -365,6 +395,57 @@ void AMVSynthAudioProcessorEditor::timerCallback()
         patternDisplay.meter = meter;
         patternDisplay.repaint();
     }
+
+    const auto param = [this] (const char* paramId) { return processor.apvts.getRawParameterValue (paramId)->load(); };
+    const auto sync = [] (WaveDisplay& d, int table, float position, float level)
+    {
+        if (table != d.table || std::abs (position - d.position) > 1.0e-4f || (level > 0.0f) != d.active)
+        {
+            d.table = table;
+            d.position = position;
+            d.active = level > 0.0f;
+            d.repaint();
+        }
+    };
+    sync (waveA, juce::roundToInt (param (amv::id::oscATable)), param (amv::id::oscAPos), param (amv::id::oscALevel));
+    sync (waveB, juce::roundToInt (param (amv::id::oscBTable)), param (amv::id::oscBPos), param (amv::id::oscBLevel));
+}
+
+void AMVSynthAudioProcessorEditor::WaveDisplay::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    auto area = getLocalBounds().toFloat();
+    g.setColour (colour::background);
+    g.fillRoundedRectangle (area, 6.0f);
+    area.reduce (10.0f, 10.0f);
+
+    g.setColour (colour::track);
+    g.fillRect (area.getX(), area.getCentreY() - 0.5f, area.getWidth(), 1.0f);
+
+    const auto& bank = WavetableBank::get();
+    const int t = juce::jlimit (0, WavetableBank::numTables - 1, table);
+    const float framePos = juce::jlimit (0.0f, 1.0f, position) * (float) (WavetableBank::numFrames - 1);
+    const int frame = juce::jmin ((int) framePos, WavetableBank::numFrames - 2);
+    const float mix = framePos - (float) frame;
+    const float* a = bank.wave (t, frame, 2);
+    const float* b = bank.wave (t, frame + 1, 2);
+
+    juce::Path path;
+    const int points = juce::jmax (2, (int) area.getWidth());
+    for (int i = 0; i < points; ++i)
+    {
+        const int index = i * WavetableBank::tableSize / (points - 1);
+        const float v = a[index] + (b[index] - a[index]) * mix;
+        const float x = area.getX() + (float) i, y = area.getCentreY() - v * area.getHeight() * 0.47f;
+        if (i == 0)
+            path.startNewSubPath (x, y);
+        else
+            path.lineTo (x, y);
+    }
+
+    // An oscillator that is turned down is drawn dimmed.
+    g.setColour (colour::teal.withAlpha (active ? 1.0f : 0.4f));
+    g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void AMVSynthAudioProcessorEditor::PatternDisplay::paint (juce::Graphics& g)
@@ -493,11 +574,13 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
 void AMVSynthAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
-    auto tabs = area.removeFromTop (headerHeight).removeFromRight (190).reduced (0, 12);
-    tabs.removeFromRight (16);
-    fxTab.setBounds (tabs.removeFromRight (80));
-    tabs.removeFromRight (6);
-    synthTab.setBounds (tabs.removeFromRight (80));
+    auto tabArea = area.removeFromTop (headerHeight).removeFromRight (276).reduced (0, 12);
+    tabArea.removeFromRight (16);
+    for (size_t i = tabs.size(); i-- > 0;)
+    {
+        tabs[i].setBounds (tabArea.removeFromRight (80));
+        tabArea.removeFromRight (6);
+    }
 
     keyboard.setBounds (area.removeFromBottom (keyboardHeight));
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7
