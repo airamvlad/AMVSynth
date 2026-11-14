@@ -90,15 +90,16 @@ private:
         std::vector<Knob*> knobs;
         std::vector<juce::Component*> column;
         int columnsInColumn = 1;
+        int columnWidth = 0; // preferred width of a column cell, 0 for the default
         juce::Component* display = nullptr; // optional wide component between the column and the knobs
         juce::Rectangle<int> bounds;
     };
 
-    using ParamList = std::initializer_list<std::pair<const char*, const char*>>;
+    using ParamList = std::initializer_list<std::pair<juce::String, const char*>>;
 
     std::vector<Knob*> makeKnobs (bool balkan, ParamList params);
-    Toggle* makeToggle (const char* paramId, const juce::String& text, bool balkan);
-    Choice* makeChoice (const char* paramId, bool balkan);
+    Toggle* makeToggle (const juce::String& paramId, const juce::String& text, bool balkan);
+    Choice* makeChoice (const juce::String& paramId, bool balkan);
     Section& addSection (const juce::String& title, bool balkan, int row, float weight);
     void layoutSection (Section&);
     void showModel (int index);
@@ -118,7 +119,7 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
-    std::array<juce::TextButton, 3> tabs;
+    std::array<juce::TextButton, 4> tabs;
     int currentPage = 0, buildingPage = 0;
 
     PatternDisplay patternDisplay;

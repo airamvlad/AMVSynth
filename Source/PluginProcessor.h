@@ -52,5 +52,12 @@ private:
     juce::MidiBuffer arpMidi;
     juce::SmoothedValue<float> outputGain;
 
+    // The numbered modulation parameters are looked up once, their names are built at run time.
+    struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; };
+    struct SlotRefs { std::atomic<float>* source; std::atomic<float>* dest; std::atomic<float>* amount; };
+    std::array<LfoRefs, amv::mod::numLfos> lfoRefs {};
+    std::array<std::atomic<float>*, amv::mod::numMacros> macroRefs {};
+    std::array<SlotRefs, amv::mod::numSlots> slotRefs {};
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessor)
 };

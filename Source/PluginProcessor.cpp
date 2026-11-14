@@ -6,6 +6,15 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
       apvts (*this, nullptr, "AMVSynth", amv::createParameterLayout())
 {
     amv::WavetableBank::get(); // build the wavetables here, not on the audio thread
+
+    using namespace amv;
+    const auto ref = [this] (const juce::String& paramId) { return apvts.getRawParameterValue (paramId); };
+    for (int i = 0; i < mod::numLfos; ++i)
+        lfoRefs[(size_t) i] = { ref (id::lfo (i, "Shape")), ref (id::lfo (i, "Rate")), ref (id::lfo (i, "Sync")), ref (id::lfo (i, "Division")) };
+    for (int i = 0; i < mod::numMacros; ++i)
+        macroRefs[(size_t) i] = ref (id::macro (i));
+    for (int i = 0; i < mod::numSlots; ++i)
+        slotRefs[(size_t) i] = { ref (id::slot (i, "Source")), ref (id::slot (i, "Dest")), ref (id::slot (i, "Amount")) };
 }
 
 void AMVSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -73,6 +82,14 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.noiseLevel = value (id::noiseLevel);
     p.noiseColorHz = value (id::noiseColor);
 
+    for (size_t i = 0; i < lfoRefs.size(); ++i)
+        p.lfos[i] = { juce::roundToInt (lfoRefs[i].shape->load()), lfoRefs[i].rate->load(), lfoRefs[i].sync->load() > 0.5f,
+                      juce::roundToInt (lfoRefs[i].division->load()) };
+    for (size_t i = 0; i < macroRefs.size(); ++i)
+        p.modMacros[i] = macroRefs[i]->load();
+    for (size_t i = 0; i < slotRefs.size(); ++i)
+        p.slots[i] = { juce::roundToInt (slotRefs[i].source->load()), juce::roundToInt (slotRefs[i].dest->load()), slotRefs[i].amount->load() };
+
     p.tone = value (id::tone);
     p.pulseWidth = value (id::pulseWidth);
     p.detuneCents = value (id::detune);
@@ -133,7 +150,7 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     work.clear();
 
     engine.setParams (readParams());
-    engine.process (work, arpMidi);
+    engine.process (work, arpMidi, transport);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
     outputGain.applyGain (work, numSamples);
