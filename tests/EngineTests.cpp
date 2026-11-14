@@ -335,6 +335,83 @@ int main()
         }
     }
 
+    // Wavetables and the oscillator section
+    {
+        const auto& bank = WavetableBank::get();
+        const float* sine = bank.wave (0, 0, 0);
+        bool isSine = true, allFinite = true, wraps = true;
+        for (int i = 0; i < WavetableBank::tableSize; ++i)
+            isSine = isSine && near (sine[i], std::sin (juce::MathConstants<float>::twoPi * (float) i / (float) WavetableBank::tableSize), 0.002f);
+        check (isSine, "first frame of Basic Shapes is a sine");
+
+        for (int t = 0; t < WavetableBank::numTables; ++t)
+            for (int f = 0; f < WavetableBank::numFrames; ++f)
+            {
+                float peak = 0.0f;
+                const float* w = bank.wave (t, f, 0);
+                for (int i = 0; i <= WavetableBank::tableSize; ++i)
+                {
+                    allFinite = allFinite && std::isfinite (w[i]);
+                    peak = juce::jmax (peak, std::abs (w[i]));
+                }
+                allFinite = allFinite && near (peak, 1.0f, 0.01f);
+                wraps = wraps && near (w[WavetableBank::tableSize], w[0], 1.0e-9f);
+            }
+        check (allFinite && wraps, "every wavetable frame is normalised and wraps");
+
+        // The top level of a saw keeps two harmonics, so it must be smooth.
+        const float* top = bank.wave (0, 10, WavetableBank::numLevels - 1);
+        float maxStep = 0.0f;
+        for (int i = 0; i < WavetableBank::tableSize; ++i)
+            maxStep = juce::jmax (maxStep, std::abs (top[i + 1] - top[i]));
+        check (maxStep < 0.01f, "highest band-limited level has no sharp edges");
+        check (WavetableBank::levelFor (0.0001f) == 0 && WavetableBank::levelFor (0.01f) == 5 && WavetableBank::levelFor (0.4f) == 9,
+               "band-limited level follows the pitch");
+
+        EngineParams base;
+        const auto reference = render (base);
+
+        EngineParams p;
+        p.engineLevel = 0.0f;
+        const auto silent = render (p);
+        check (silent.peak < 1.0e-9f, "nothing sounds with every source turned down");
+
+        p.oscA.level = 1.0f;
+        p.oscA.table = 0;
+        p.oscA.position = 0.66f;
+        p.oscA.unison = 7;
+        p.oscA.detuneCents = 30.0f;
+        const auto supersaw = render (p);
+        check (supersaw.finite && supersaw.peak > 0.05f && supersaw.peak < 2.5f && supersaw.tailPeak < 0.001f, "oscillator A with 7 voice unison");
+
+        for (int t = 0; t < WavetableBank::numTables; ++t)
+        {
+            EngineParams q;
+            q.engineLevel = 0.0f;
+            q.oscB.level = 1.0f;
+            q.oscB.table = t;
+            q.oscB.position = 0.5f;
+            q.oscB.pitch = 12.0f;
+            const auto r = render (q);
+            check (r.finite && r.peak > 0.05f && r.peak < 2.0f, getWavetableNames()[(size_t) t]);
+        }
+
+        EngineParams q;
+        q.engineLevel = 0.0f;
+        q.subLevel = 1.0f;
+        q.subShape = 0.5f;
+        q.subOctave = 2;
+        const auto sub = render (q);
+        q.subLevel = 0.0f;
+        q.noiseLevel = 1.0f;
+        const auto noiseOnly = render (q);
+        check (sub.finite && sub.peak > 0.05f && noiseOnly.finite && noiseOnly.peak > 0.02f, "sub oscillator and noise");
+
+        base.oscA.level = 0.5f;
+        const auto layered = render (base);
+        check (layered.finite && ! near (layered.peak, reference.peak, 1.0e-4f), "oscillators layer with the Balkan engine");
+    }
+
     std::printf ("%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

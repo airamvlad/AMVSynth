@@ -63,6 +63,15 @@ private:
         int meter = 0;
     };
 
+    /** Draws the current shape of a wavetable oscillator. */
+    struct WaveDisplay final : public juce::Component
+    {
+        void paint (juce::Graphics&) override;
+        int table = -1;
+        float position = 0.0f;
+        bool active = false;
+    };
+
     struct Choice
     {
         juce::ComboBox box;
@@ -109,10 +118,11 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
-    juce::TextButton synthTab { "SYNTH" }, fxTab { "FX" };
+    std::array<juce::TextButton, 3> tabs;
     int currentPage = 0, buildingPage = 0;
 
     PatternDisplay patternDisplay;
+    WaveDisplay waveA, waveB;
     juce::MidiKeyboardComponent keyboard;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessorEditor)

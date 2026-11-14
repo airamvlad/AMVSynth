@@ -5,6 +5,7 @@
 #include "Arpeggiator.h"
 #include "Effects.h"
 #include "Tuning.h"
+#include "Wavetables.h"
 
 namespace amv
 {
@@ -94,6 +95,26 @@ inline constexpr auto fltD = "fltDecay";
 inline constexpr auto fltS = "fltSustain";
 inline constexpr auto fltR = "fltRelease";
 inline constexpr auto level = "level";
+inline constexpr auto engineLevel = "engineLevel";
+inline constexpr auto oscATable = "oscATable";
+inline constexpr auto oscAPos = "oscAPosition";
+inline constexpr auto oscAUnison = "oscAUnison";
+inline constexpr auto oscADetune = "oscADetune";
+inline constexpr auto oscAPitch = "oscAPitch";
+inline constexpr auto oscAFine = "oscAFine";
+inline constexpr auto oscALevel = "oscALevel";
+inline constexpr auto oscBTable = "oscBTable";
+inline constexpr auto oscBPos = "oscBPosition";
+inline constexpr auto oscBUnison = "oscBUnison";
+inline constexpr auto oscBDetune = "oscBDetune";
+inline constexpr auto oscBPitch = "oscBPitch";
+inline constexpr auto oscBFine = "oscBFine";
+inline constexpr auto oscBLevel = "oscBLevel";
+inline constexpr auto subLevel = "subLevel";
+inline constexpr auto subOctave = "subOctave";
+inline constexpr auto subShape = "subShape";
+inline constexpr auto noiseLevel = "noiseLevel";
+inline constexpr auto noiseColor = "noiseColor";
 } // namespace id
 
 inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -162,6 +183,35 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::gajDroneTune, "Gajde Drone Tune", Range (-12.0f, 12.0f, 1.0f), 0.0f, "st");
     add (id::gajBag, "Gajde Bag", Range (0.0f, 1.0f), 0.8f);
     add (id::gajEdge, "Gajde Edge", Range (0.0f, 1.0f), 0.5f);
+
+    // Wavetable oscillators, sub, noise and the mixer
+    juce::StringArray tableNames;
+    for (const auto* n : getWavetableNames())
+        tableNames.add (n);
+
+    add (id::engineLevel, "Engine Level", Range (0.0f, 1.0f), 1.0f);
+
+    addChoice (id::oscATable, "Osc A Table", tableNames, 0);
+    add (id::oscAPos, "Osc A Position", Range (0.0f, 1.0f), 0.66f);
+    add (id::oscAUnison, "Osc A Unison", Range (1.0f, 7.0f, 1.0f), 1.0f);
+    add (id::oscADetune, "Osc A Detune", Range (0.0f, 100.0f), 18.0f, "ct");
+    add (id::oscAPitch, "Osc A Pitch", Range (-24.0f, 24.0f, 1.0f), 0.0f, "st");
+    add (id::oscAFine, "Osc A Fine", Range (-100.0f, 100.0f), 0.0f, "ct");
+    add (id::oscALevel, "Osc A Level", Range (0.0f, 1.0f), 0.0f);
+
+    addChoice (id::oscBTable, "Osc B Table", tableNames, 1);
+    add (id::oscBPos, "Osc B Position", Range (0.0f, 1.0f), 0.4f);
+    add (id::oscBUnison, "Osc B Unison", Range (1.0f, 7.0f, 1.0f), 1.0f);
+    add (id::oscBDetune, "Osc B Detune", Range (0.0f, 100.0f), 18.0f, "ct");
+    add (id::oscBPitch, "Osc B Pitch", Range (-24.0f, 24.0f, 1.0f), 0.0f, "st");
+    add (id::oscBFine, "Osc B Fine", Range (-100.0f, 100.0f), 0.0f, "ct");
+    add (id::oscBLevel, "Osc B Level", Range (0.0f, 1.0f), 0.0f);
+
+    add (id::subLevel, "Sub Level", Range (0.0f, 1.0f), 0.0f);
+    addChoice (id::subOctave, "Sub Octave", { "-1 OCT", "-2 OCT" }, 0);
+    add (id::subShape, "Sub Shape", Range (0.0f, 1.0f), 0.0f);
+    add (id::noiseLevel, "Noise Level", Range (0.0f, 1.0f), 0.0f);
+    add (id::noiseColor, "Noise Color", skewed (200.0f, 18000.0f, 2500.0f), 6000.0f, "Hz");
 
     // Arpeggiator
     juce::StringArray meterNames, rateNames, modeNames;
