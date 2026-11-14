@@ -127,6 +127,9 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         modelKnobs.push_back (makeKnobs (true, { { id::fruBreath, "BREATH" }, { id::fruOverblow, "OVERBLOW" }, { id::fruNoise, "NOISE" }, { id::fruChiff, "CHIFF" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::kavBreath, "BREATH" }, { id::kavOverblow, "OVERBLOW" }, { id::kavNoise, "NOISE" }, { id::kavThroat, "THROAT" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::gajDrone, "DRONE" }, { id::gajDroneTune, "DRONE TUNE" }, { id::gajBag, "BAG" }, { id::gajEdge, "EDGE" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::zurPressure, "PRESSURE" }, { id::zurBite, "BITE" }, { id::zurGrowl, "GROWL" }, { id::zurNasal, "NASAL" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::tamPluck, "PLUCK" }, { id::tamDecay, "DECAY" }, { id::tamDouble, "DOUBLE" }, { id::tamTone, "TONE" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::tapThump, "THUMP" }, { id::tapSnap, "SNAP" }, { id::tapDecay, "DECAY" }, { id::tapRing, "RING" } }));
     }
     {
         auto& s = addSection ("PERFORMANCE", false, 0, 6.0f);

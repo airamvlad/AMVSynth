@@ -21,7 +21,10 @@ enum class Model
     gusle,
     frula,
     kaval,
-    gajde
+    gajde,
+    zurla,
+    tambura,
+    tapan
 };
 
 enum class Ornament
@@ -80,6 +83,9 @@ struct EngineParams
     //   frula: breath, overblow, noise, chiff
     //   kaval: breath, overblow, noise, throat
     //   gajde: drone level, drone tuning in semitones, bag pressure, edge
+    //   zurla: pressure, bite, growl, nasal
+    //   tambura: pluck, decay, double string, tone
+    //   tapan: thump, snap, decay, ring
     std::array<float, 4> macro { 0.7f, 0.4f, 0.3f, 0.5f };
 
     // Performance
@@ -132,6 +138,14 @@ public:
         fltEnv.setSampleRate (newSampleRate);
         filter.prepare ({ newSampleRate, 64, 1 });
         filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+
+        // Plucked strings: long enough for the lowest note at this sample rate.
+        size_t length = 1024;
+        while ((double) length < newSampleRate / 14.0)
+            length *= 2;
+        for (auto& s : strings)
+            s.buffer.assign (length, 0.0f);
+
         reset();
     }
 
@@ -182,6 +196,15 @@ public:
             for (auto& b : bands)
                 b.reset();
         }
+
+        // A new note plucks the strings and hits the drum again; a legato slide does not.
+        for (auto& s : strings)
+            s.clear();
+        exciteLeft = juce::jmax (2, (int) ((float) sampleRate / midiToHz (targetPitch)));
+        exciteLp = 0.0f;
+        drumTime = 0.0f;
+        if (! wasActive)
+            drumPhase = { 0.0f, 0.0f };
 
         vibTime = 0.0f;
         clickEnv = 1.0f;
@@ -331,6 +354,9 @@ public:
                     case Model::frula:      s = renderPipe (pitch, sr, p, mc, false); break;
                     case Model::kaval:      s = renderPipe (pitch, sr, p, mc, true); break;
                     case Model::gajde:      s = renderGajde (pitch, sr, p, mc); break;
+                    case Model::zurla:      s = renderZurla (pitch, sr, p, mc); break;
+                    case Model::tambura:    s = renderTambura (pitch, sr, p, mc); break;
+                    case Model::tapan:      s = renderTapan (pitch, sr, p, mc); break;
                 }
 
                 s *= p.engineLevel;
@@ -396,8 +422,44 @@ private:
         float k = 1.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, ic1 = 0.0f, ic2 = 0.0f;
     };
 
+    /** A plucked string: a delay line with a low-pass in its feedback path. */
+    struct StringLine
+    {
+        void clear() noexcept
+        {
+            std::fill (buffer.begin(), buffer.end(), 0.0f);
+            lp = 0.0f;
+        }
+
+        float process (float delay, float input, float lpCoeff, float loss) noexcept
+        {
+            const auto size = buffer.size();
+            if (size == 0)
+                return 0.0f;
+
+            delay = juce::jlimit (2.0f, (float) size - 2.0f, delay);
+            const int whole = (int) delay;
+            const float frac = delay - (float) whole;
+            const size_t mask = size - 1;
+            const float a = buffer[(write + size - (size_t) whole) & mask];
+            const float b = buffer[(write + size - (size_t) whole - 1) & mask];
+            const float out = a + (b - a) * frac;
+
+            lp += (out - lp) * lpCoeff;
+            buffer[write] = input + lp * loss;
+            write = (write + 1) & mask;
+            return out;
+        }
+
+        std::vector<float> buffer;
+        size_t write = 0;
+        float lp = 0.0f;
+    };
+
     struct ModelCoeffs
     {
+        float loss = 0.0f;
+
         // shared by the newer models
         float level = 1.0f, brightCoeff = 1.0f, slowCoeff = 0.0f, fastCoeff = 0.0f;
 
@@ -548,6 +610,45 @@ private:
                 mc.brightCoeff = onePole (1500.0f * std::exp2 (p.macro[3] * 2.6f));
                 bands[0].set (1400.0f, 3.0f, sr);
                 bands[1].set (2900.0f, 4.0f, sr);
+                return;
+            }
+
+            case Model::zurla:
+            {
+                const float pressure = 0.3f + 0.7f * p.macro[0];
+                mc.level = pressure * 1.25f;
+                mc.brightCoeff = onePole (2200.0f * std::exp2 (pressure * 2.4f));
+                mc.slowCoeff = onePole (3.0f);
+                mc.fastCoeff = onePole (55.0f);
+                bands[0].set (1250.0f, 3.5f, sr);
+                bands[1].set (2700.0f, 4.5f, sr);
+                bands[2].set (4300.0f, 5.0f, sr);
+                return;
+            }
+
+            case Model::tambura:
+            {
+                // Seconds for the string to die away, and the loss per trip round the string that gives it.
+                const float t60 = 0.35f * std::pow (25.0f, p.macro[1]);
+                mc.loss = std::pow (10.0f, -3.0f / (juce::jmax (20.0f, hz) * t60));
+                mc.brightCoeff = 0.3f + 0.65f * p.macro[3];                       // damping inside the string loop
+                mc.fastCoeff = onePole (700.0f * std::exp2 (p.macro[0] * 4.0f));  // pick hardness
+                mc.detune = p.macro[2] * 0.14f;
+                mc.slowCoeff = onePole (25.0f);
+                mc.level = 0.9f;
+                bands[0].set (310.0f, 3.0f, sr);
+                bands[1].set (1900.0f, 2.5f, sr);
+                return;
+            }
+
+            case Model::tapan:
+            {
+                mc.level = 0.9f;
+                mc.loss = std::exp (-1.0f / ((0.08f + 0.9f * p.macro[2] * p.macro[2]) * sr)); // decay of the skin
+                mc.clickDecay = std::exp (-1.0f / (0.035f * sr));                             // decay of the stick crack
+                mc.slowCoeff = std::exp (-1.0f / ((0.012f + 0.03f * p.macro[0]) * sr));       // how fast the pitch drops
+                bands[0].set (2400.0f, 1.2f, sr);
+                bands[1].set (5200.0f, 2.0f, sr);
                 return;
             }
 
@@ -713,6 +814,86 @@ private:
         return (reedLp * 0.45f + nasal) * mc.level;
     }
 
+    /** Zurla: a double reed on a wide conical pipe. Very bright and loud, with a strong nasal
+        formant and a rough edge when it is pushed. */
+    float renderZurla (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float bite = p.macro[1], growl = p.macro[2], nasal = p.macro[3];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+
+        const float inc = midiToHz (pitch + slowNoise * 3.0f + growl * 4.0f * fastNoise) / sr;
+        float s = pulse (phases[0], inc, 0.3f - 0.22f * bite) * 0.65f + saw (phases[0], inc) * 0.5f;
+        advance (phases[0], inc);
+
+        s *= 1.0f + growl * 9.0f * fastNoise;
+
+        reedLp += (s - reedLp) * mc.brightCoeff;
+        const float formants = bands[0].process (reedLp) * 2.0f + bands[1].process (reedLp) * 1.6f + bands[2].process (reedLp) * 1.0f;
+        return (reedLp * (1.0f - 0.6f * nasal) + formants * nasal) * mc.level;
+    }
+
+    /** Tambura: a pair of metal strings plucked with a pick. Each string is a delay line one
+        period long that feeds back through a gentle low-pass, so high harmonics die first. */
+    float renderTambura (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        float excite = 0.0f;
+        if (exciteLeft > 0)
+        {
+            exciteLp += (noise() - exciteLp) * mc.fastCoeff;
+            excite = exciteLp * 1.4f;
+            --exciteLeft;
+        }
+
+        // The low-pass in the loop delays the wave a little; shorten the string to stay in tune.
+        const float filterDelay = (1.0f - mc.brightCoeff) / mc.brightCoeff;
+        const float second = p.macro[2] > 0.001f ? 0.8f : 0.0f;
+
+        float s = strings[0].process (sr / midiToHz (pitch - mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
+        if (second > 0.0f)
+            s += second * strings[1].process (sr / midiToHz (pitch + mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
+
+        // The pluck leaves a constant offset circulating in the string; keep it out of the output.
+        slowNoise += (s - slowNoise) * mc.slowCoeff;
+        s -= slowNoise;
+
+        const float body = bands[0].process (s) * 0.5f + bands[1].process (s) * 0.35f;
+        return (s * 0.75f + body) * mc.level;
+    }
+
+    /** Tapan: a large drum with two skins. The heavy beater gives a low thump whose pitch drops
+        as it rings, the thin switch on the other side gives a sharp crack. */
+    float renderTapan (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float thump = p.macro[0], snap = p.macro[1], ring = p.macro[3];
+        const float twoPi = juce::MathConstants<float>::twoPi;
+
+        if (drumTime <= 0.0f)
+        {
+            drumEnv = 1.0f;
+            drumDrop = 1.0f;
+            clickEnv = 1.0f;
+        }
+        drumTime += 1.0f / sr;
+
+        const float inc = midiToHz (pitch + drumDrop * (4.0f + 14.0f * thump)) / sr;
+        float s = std::sin (drumPhase[0] * twoPi) + ring * 0.5f * std::sin (drumPhase[1] * twoPi);
+        advance (drumPhase[0], inc);
+        advance (drumPhase[1], juce::jmin (0.45f, inc * 1.59f));
+
+        // Soft attack of a few milliseconds, so the thump does not click.
+        s *= drumEnv * juce::jmin (1.0f, drumTime * 600.0f);
+
+        const float white = noise();
+        const float crack = (bands[0].process (white) + bands[1].process (white) * 0.6f) * clickEnv * snap * (0.4f + 0.8f * velocity);
+
+        drumEnv *= mc.loss;
+        drumDrop *= mc.slowCoeff;
+        clickEnv *= mc.clickDecay;
+        return (s + crack) * mc.level;
+    }
+
     static float midiToHz (float pitch) noexcept
     {
         return 440.0f * std::exp2 ((pitch - 69.0f) / 12.0f);
@@ -776,6 +957,12 @@ private:
     float reedLp = 0.0f, clickEnv = 0.0f, clickLp = 0.0f, clickHp = 0.0f;
     float slowNoise = 0.0f, fastNoise = 0.0f;
     std::array<Band, 3> bands;
+
+    std::array<StringLine, 2> strings;
+    int exciteLeft = 0;
+    float exciteLp = 0.0f;
+    std::array<float, 2> drumPhase {};
+    float drumTime = 0.0f, drumEnv = 0.0f, drumDrop = 0.0f;
 
     OscPhases oscPhasesA {}, oscPhasesB {};
     float subPhase = 0.0f, noiseLp = 0.0f;
@@ -978,7 +1165,8 @@ private:
             heldNotes.erase (std::remove (heldNotes.begin(), heldNotes.end(), note), heldNotes.end());
             heldNotes.push_back (note);
 
-            if (legato)
+            // A drum is struck again on every note; the other models slide.
+            if (legato && params.model != Model::tapan)
                 v.slideTo (e);
             else
                 v.start (e, counter, params, true);

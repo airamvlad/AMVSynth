@@ -142,17 +142,96 @@ int main()
 
     // Every model renders, stays in a sane range and falls silent.
     {
-        const char* names[] { "lead", "accordion", "gusle", "frula", "kaval", "gajde" };
-        for (int m = 0; m < 6; ++m)
+        const char* names[] { "lead", "accordion", "gusle", "frula", "kaval", "gajde", "zurla", "tambura", "tapan" };
+        for (int m = 0; m < 9; ++m)
         {
             EngineParams p;
             p.model = (Model) m;
             if (p.model == Model::gajde)
                 p.macro = { 0.6f, 0.0f, 0.8f, 0.5f };
+            if (p.model == Model::zurla)
+                p.macro = { 0.75f, 0.5f, 0.2f, 0.6f };
+            if (p.model == Model::tambura)
+                p.macro = { 0.65f, 0.55f, 0.4f, 0.6f };
+            if (p.model == Model::tapan)
+                p.macro = { 0.5f, 0.5f, 0.45f, 0.3f };
             const auto r = render (p);
             std::printf ("      %-10s peak %.3f\n", names[m], (double) r.peak);
             check (r.finite && r.peak > 0.05f && r.peak < 3.0f && r.tailPeak < 1.0e-4f, names[m]);
         }
+    }
+
+    // The plucked string is in tune: find the period of a steady A3 (220 Hz) by autocorrelation.
+    {
+        const auto measure = [] (float tone)
+        {
+            SynthEngine engine;
+            engine.prepare (48000.0, 512);
+            EngineParams p;
+            p.model = Model::tambura;
+            p.macro = { 0.2f, 1.0f, 0.0f, tone };
+            p.vibDepthCents = 0.0f;
+            engine.setParams (p);
+
+            std::vector<float> out;
+            for (int block = 0; block < 60; ++block)
+            {
+                juce::MidiBuffer midi;
+                if (block == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 0);
+                juce::AudioBuffer<float> buffer (1, 512);
+                buffer.clear();
+                engine.process (buffer, midi);
+                out.insert (out.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + 512);
+            }
+
+            const int start = 9600, length = 12000;
+            std::vector<double> ac (400, 0.0);
+            int best = 150;
+            for (int lag = 150; lag < 300; ++lag)
+            {
+                for (int i = 0; i < length; ++i)
+                    ac[(size_t) lag] += (double) out[(size_t) (start + i)] * out[(size_t) (start + i + lag)];
+                if (ac[(size_t) lag] > ac[(size_t) best])
+                    best = lag;
+            }
+
+            // Refine the peak between samples with a parabola.
+            const double a = ac[(size_t) best - 1], b = ac[(size_t) best], c = ac[(size_t) best + 1];
+            return (float) (48000.0 / ((double) best + 0.5 * (a - c) / (a - 2.0 * b + c)));
+        };
+        const float bright = measure (0.9f), dark = measure (0.1f);
+        std::printf ("      tambura A3: %.2f Hz bright, %.2f Hz dark\n", (double) bright, (double) dark);
+        check (near (bright, 220.0f, 0.4f) && near (dark, 220.0f, 0.4f), "tambura string is in tune at both tone settings");
+    }
+
+    // The tapan is struck again on every note, even in mono legato.
+    {
+        SynthEngine engine;
+        engine.prepare (48000.0, 512);
+        EngineParams p;
+        p.model = Model::tapan;
+        p.macro = { 0.5f, 0.0f, 0.2f, 0.0f };
+        p.vibDepthCents = 0.0f;
+        engine.setParams (p);
+        float before = 0.0f, after = 0.0f;
+        for (int block = 0; block < 60; ++block)
+        {
+            juce::MidiBuffer midi;
+            if (block == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 40, 0.9f), 0);
+            if (block == 50)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 43, 0.9f), 0); // overlaps the first note
+            juce::AudioBuffer<float> buffer (1, 512);
+            buffer.clear();
+            engine.process (buffer, midi);
+            const float peak = buffer.getMagnitude (0, 0, 512);
+            if (block >= 46 && block < 50)
+                before = juce::jmax (before, peak);
+            if (block >= 50 && block < 54)
+                after = juce::jmax (after, peak);
+        }
+        check (before < 0.05f && after > 0.2f, "tapan decays on its own and is struck again by an overlapping note");
     }
 
     // Arpeggiator: 7/8 (3+2+2) in sixteenths at 120 bpm, host playing from bar start.
