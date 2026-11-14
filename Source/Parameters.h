@@ -35,6 +35,18 @@ inline constexpr auto gajDrone = "gajDrone";
 inline constexpr auto gajDroneTune = "gajDroneTune";
 inline constexpr auto gajBag = "gajBag";
 inline constexpr auto gajEdge = "gajEdge";
+inline constexpr auto zurPressure = "zurPressure";
+inline constexpr auto zurBite = "zurBite";
+inline constexpr auto zurGrowl = "zurGrowl";
+inline constexpr auto zurNasal = "zurNasal";
+inline constexpr auto tamPluck = "tamPluck";
+inline constexpr auto tamDecay = "tamDecay";
+inline constexpr auto tamDouble = "tamDouble";
+inline constexpr auto tamTone = "tamTone";
+inline constexpr auto tapThump = "tapThump";
+inline constexpr auto tapSnap = "tapSnap";
+inline constexpr auto tapDecay = "tapDecay";
+inline constexpr auto tapRing = "tapRing";
 inline constexpr auto arpOn = "arpOn";
 inline constexpr auto arpMeter = "arpMeter";
 inline constexpr auto arpRate = "arpRate";
@@ -152,7 +164,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { paramId, 1 }, name, choices, def));
     };
 
-    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde" }, 0);
+    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde", "Zurla", "Tambura", "Tapan" }, 0);
 
     // Juzni Vetar lead
     add (id::tone, "Lead Tone", Range (0.0f, 1.0f), 0.55f);
@@ -189,6 +201,24 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::gajDroneTune, "Gajde Drone Tune", Range (-12.0f, 12.0f, 1.0f), 0.0f, "st");
     add (id::gajBag, "Gajde Bag", Range (0.0f, 1.0f), 0.8f);
     add (id::gajEdge, "Gajde Edge", Range (0.0f, 1.0f), 0.5f);
+
+    // Zurla
+    add (id::zurPressure, "Zurla Pressure", Range (0.0f, 1.0f), 0.75f);
+    add (id::zurBite, "Zurla Bite", Range (0.0f, 1.0f), 0.5f);
+    add (id::zurGrowl, "Zurla Growl", Range (0.0f, 1.0f), 0.2f);
+    add (id::zurNasal, "Zurla Nasal", Range (0.0f, 1.0f), 0.6f);
+
+    // Tambura
+    add (id::tamPluck, "Tambura Pluck", Range (0.0f, 1.0f), 0.65f);
+    add (id::tamDecay, "Tambura Decay", Range (0.0f, 1.0f), 0.55f);
+    add (id::tamDouble, "Tambura Double", Range (0.0f, 1.0f), 0.4f);
+    add (id::tamTone, "Tambura Tone", Range (0.0f, 1.0f), 0.6f);
+
+    // Tapan
+    add (id::tapThump, "Tapan Thump", Range (0.0f, 1.0f), 0.5f);
+    add (id::tapSnap, "Tapan Snap", Range (0.0f, 1.0f), 0.5f);
+    add (id::tapDecay, "Tapan Decay", Range (0.0f, 1.0f), 0.45f);
+    add (id::tapRing, "Tapan Ring", Range (0.0f, 1.0f), 0.3f);
 
     // Wavetable oscillators, sub, noise and the mixer
     juce::StringArray tableNames;

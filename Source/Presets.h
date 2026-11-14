@@ -20,7 +20,7 @@ inline const std::vector<Preset>& getFactoryPresets()
     using namespace id;
 
     // Choice indices used below.
-    enum { juzni = 0, accordion, gusle, frula, kaval, gajde };
+    enum { juzni = 0, accordion, gusle, frula, kaval, gajde, zurlaModel, tambura, tapan };
     enum { chromatic = 0, hijaz, hijazkar, nikriz, harmonicMinor, kurdi, rast, ussak, huseyni, saba, naturalMinor, majorScale };
     enum { m44 = 0, m58, m78a, m78b, m98, m118 };
     enum { basic = 0, acid, pwm, vowels, kavalTable, zurla, reeds, bells };
@@ -83,6 +83,30 @@ inline const std::vector<Preset>& getFactoryPresets()
             { scale, hijaz }, { snap, 1 }, { ornGrace, 1 }, { ornMordent, 1 }, { ornChance, 70.0f }, { ornSpeed, 40.0f },
             { glide, 15.0f }, { vibDepth, 0.0f }, { ampA, 25.0f }, { ampS, 1.0f }, { cutoff, 8000.0f }, { filterEnv, 0.0f },
             { reverbOn, 1 }, { reverbMix, 16.0f } } },
+
+        { "Zurla Svadba", {
+            { model, zurlaModel }, { zurPressure, 0.8f }, { zurBite, 0.55f }, { zurGrowl, 0.25f }, { zurNasal, 0.65f },
+            { scale, hijaz }, { snap, 1 }, { ornGrace, 1 }, { ornTrill, 1 }, { ornFall, 1 }, { ornChance, 60.0f }, { ornSpeed, 42.0f },
+            { glide, 35.0f }, { vibDepth, 26.0f }, { vibRate, 6.4f }, { ampA, 20.0f }, { cutoff, 11000.0f }, { filterEnv, 0.0f },
+            { level, -12.0f }, { reverbOn, 1 }, { reverbMix, 18.0f } } },
+
+        { "Tambura Sitna", {
+            { model, tambura }, { tamPluck, 0.7f }, { tamDecay, 0.5f }, { tamDouble, 0.45f }, { tamTone, 0.65f },
+            { scale, majorScale }, { snap, 1 }, { mono, 0 }, { vibDepth, 0.0f }, { glide, 0.0f },
+            { cutoff, 12000.0f }, { filterEnv, 0.0f }, { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 400.0f },
+            { reverbOn, 1 }, { reverbSize, 0.4f }, { reverbMix, 14.0f } } },
+
+        { "Tambura 7/8 Arp", {
+            { model, tambura }, { tamPluck, 0.85f }, { tamDecay, 0.4f }, { tamDouble, 0.5f }, { tamTone, 0.75f },
+            { scale, hijaz }, { snap, 1 }, { vibDepth, 0.0f }, { glide, 0.0f },
+            { cutoff, 9000.0f }, { filterEnv, 0.2f }, { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 200.0f },
+            { arpOn, 1 }, { arpMeter, m78b }, { arpRate, 1 }, { arpMode, 0 }, { arpOctaves, 2.0f }, { arpGate, 70.0f }, { arpAccent, 70.0f },
+            { delayOn, 1 }, { delayTime, 2 }, { delayMix, 26.0f }, { reverbOn, 1 }, { reverbMix, 16.0f } } },
+
+        { "Tapan", {
+            { model, tapan }, { tapThump, 0.55f }, { tapSnap, 0.5f }, { tapDecay, 0.45f }, { tapRing, 0.3f },
+            { vibDepth, 0.0f }, { glide, 0.0f }, { cutoff, 14000.0f }, { filterEnv, 0.0f },
+            { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 300.0f }, { reverbOn, 1 }, { reverbSize, 0.3f }, { reverbMix, 10.0f } } },
 
         { "Psy Bass", {
             { engineLevel, 0.0f }, { oscATable, basic }, { oscAPos, 0.66f }, { oscALevel, 0.9f }, { oscAPitch, -12.0f },

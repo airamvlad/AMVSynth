@@ -67,6 +67,9 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
         case Model::frula: p.macro = { value (id::fruBreath), value (id::fruOverblow), value (id::fruNoise), value (id::fruChiff) }; break;
         case Model::kaval: p.macro = { value (id::kavBreath), value (id::kavOverblow), value (id::kavNoise), value (id::kavThroat) }; break;
         case Model::gajde: p.macro = { value (id::gajDrone), value (id::gajDroneTune), value (id::gajBag), value (id::gajEdge) }; break;
+        case Model::zurla: p.macro = { value (id::zurPressure), value (id::zurBite), value (id::zurGrowl), value (id::zurNasal) }; break;
+        case Model::tambura: p.macro = { value (id::tamPluck), value (id::tamDecay), value (id::tamDouble), value (id::tamTone) }; break;
+        case Model::tapan: p.macro = { value (id::tapThump), value (id::tapSnap), value (id::tapDecay), value (id::tapRing) }; break;
         case Model::juzniVetar:
         case Model::accordion: break;
     }

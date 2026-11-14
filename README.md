@@ -4,7 +4,7 @@ A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytra
 
 Status: early development. What works now:
 
-- Six models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval and gajde with a drone on the scale root
+- Nine models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval, gajde with a drone on the scale root, zurla, tambura (plucked string) and tapan (drum)
 - Two wavetable oscillators (Basic Shapes, Acid Saw, PWM, Vowels, Kaval, Zurla, Reeds, Bells) with up to 7 voice unison, plus a sub oscillator and noise, on their own page and mixed with the Balkan engine
 - Modulation on its own page: two LFOs (free or tempo-synced), four macros and a six slot matrix with LFOs, filter envelope, velocity, mod wheel and macros as sources
 - Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
