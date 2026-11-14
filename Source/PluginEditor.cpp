@@ -163,7 +163,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         s.column.push_back (&makeChoice (id::arpMode, true)->box);
         s.display = &patternDisplay;
         s.knobs = makeKnobs (true, { { id::arpOctaves, "OCTAVES" }, { id::arpGate, "GATE" }, { id::arpAccent, "ACCENT" } });
-        addAndMakeVisible (patternDisplay);
+        addChildComponent (patternDisplay);
     }
 
     // Row 3: filter, envelopes, output.
@@ -172,12 +172,60 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     addSection ("FILTER ENV", false, 3, 4.4f).knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
     addSection ("OUT", false, 3, 1.4f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
 
+    // FX page.
+    buildingPage = 1;
+    {
+        auto& s = addSection ("DISTORTION", false, 0, 4.0f);
+        s.column.push_back (&makeToggle (id::distOn, "ON", false)->button);
+        s.column.push_back (&makeChoice (id::distType, false)->box);
+        s.knobs = makeKnobs (false, { { id::distDrive, "DRIVE" }, { id::distMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("TRANCE GATE", false, 0, 6.0f);
+        s.column.push_back (&makeToggle (id::gateOn, "ON", false)->button);
+        s.column.push_back (&makeChoice (id::gateRate, false)->box);
+        s.column.push_back (&makeChoice (id::gatePattern, false)->box);
+        s.knobs = makeKnobs (false, { { id::gateDepth, "DEPTH" }, { id::gateLength, "LENGTH" }, { id::gateSmooth, "SMOOTH" } });
+    }
+    {
+        auto& s = addSection ("DELAY", false, 1, 6.0f);
+        s.column.push_back (&makeToggle (id::delayOn, "ON", false)->button);
+        s.column.push_back (&makeChoice (id::delayTime, false)->box);
+        s.column.push_back (&makeToggle (id::delayPingPong, "PING-PONG", false)->button);
+        s.knobs = makeKnobs (false, { { id::delayFeedback, "FEEDBACK" }, { id::delayTone, "TONE" }, { id::delayMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("REVERB", false, 1, 5.0f);
+        s.column.push_back (&makeToggle (id::reverbOn, "ON", false)->button);
+        s.knobs = makeKnobs (false, { { id::reverbSize, "SIZE" }, { id::reverbDamp, "DAMP" }, { id::reverbMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("KICK DUCK", false, 2, 1.0f);
+        s.column.push_back (&makeToggle (id::duckOn, "ON", false)->button);
+        s.knobs = makeKnobs (false, { { id::duckDepth, "DEPTH" }, { id::duckRelease, "RELEASE" } });
+    }
+    buildingPage = 0;
+
+    for (auto* tab : { &synthTab, &fxTab })
+    {
+        tab->setClickingTogglesState (false);
+        tab->setColour (juce::TextButton::buttonColourId, colour::header);
+        tab->setColour (juce::TextButton::buttonOnColourId, colour::track);
+        tab->setColour (juce::TextButton::textColourOffId, colour::dimText);
+        tab->setColour (juce::TextButton::textColourOnId, colour::text);
+        addAndMakeVisible (*tab);
+    }
+    synthTab.onClick = [this] { setPage (0); };
+    fxTab.onClick = [this] { setPage (1); };
+    synthTab.setToggleState (true, juce::dontSendNotification);
+
     keyboard.setAvailableRange (36, 96);
     keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, colour::red);
     keyboard.setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, colour::red.withAlpha (0.4f));
     addAndMakeVisible (keyboard);
 
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (id::model)->load()));
+    updateVisibility();
     startTimerHz (20);
 
     setResizable (true, true);
@@ -223,7 +271,7 @@ AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (
     toggle->button.setButtonText (text);
     toggle->button.setColour (juce::ToggleButton::tickColourId, balkan ? amv::colour::red : amv::colour::teal);
     toggle->attachment = std::make_unique<APVTS::ButtonAttachment> (processor.apvts, paramId, toggle->button);
-    addAndMakeVisible (toggle->button);
+    addChildComponent (toggle->button);
     toggles.push_back (std::move (toggle));
     return toggles.back().get();
 }
@@ -237,7 +285,7 @@ AMVSynthAudioProcessorEditor::Choice* AMVSynthAudioProcessorEditor::makeChoice (
 
     choice->box.setColour (juce::ComboBox::outlineColourId, balkan ? amv::colour::balkanBorder : amv::colour::panelBorder);
     choice->attachment = std::make_unique<APVTS::ComboBoxAttachment> (processor.apvts, paramId, choice->box);
-    addAndMakeVisible (choice->box);
+    addChildComponent (choice->box);
     choices.push_back (std::move (choice));
     return choices.back().get();
 }
@@ -247,6 +295,7 @@ AMVSynthAudioProcessorEditor::Section& AMVSynthAudioProcessorEditor::addSection 
     Section section;
     section.title = title;
     section.balkan = balkan;
+    section.page = buildingPage;
     section.row = row;
     section.weight = weight;
     sections.push_back (std::move (section));
@@ -260,16 +309,49 @@ void AMVSynthAudioProcessorEditor::showModel (int index)
         return;
 
     shownModel = index;
-
-    for (size_t m = 0; m < modelKnobs.size(); ++m)
-        for (auto* knob : modelKnobs[m])
-        {
-            knob->slider.setVisible ((int) m == index);
-            knob->label.setVisible ((int) m == index);
-        }
-
     sections[engineSection].knobs = modelKnobs[(size_t) index];
     layoutSection (sections[engineSection]);
+    updateVisibility();
+}
+
+void AMVSynthAudioProcessorEditor::setPage (int page)
+{
+    currentPage = page;
+    synthTab.setToggleState (page == 0, juce::dontSendNotification);
+    fxTab.setToggleState (page == 1, juce::dontSendNotification);
+    resized();
+    updateVisibility();
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::updateVisibility()
+{
+    for (auto& k : knobs)
+    {
+        k->slider.setVisible (false);
+        k->label.setVisible (false);
+    }
+    for (auto& t : toggles)
+        t->button.setVisible (false);
+    for (auto& c : choices)
+        c->box.setVisible (false);
+    patternDisplay.setVisible (false);
+
+    for (auto& s : sections)
+    {
+        if (s.page != currentPage)
+            continue;
+
+        for (auto* k : s.knobs)
+        {
+            k->slider.setVisible (true);
+            k->label.setVisible (true);
+        }
+        for (auto* c : s.column)
+            c->setVisible (true);
+        if (s.display != nullptr)
+            s.display->setVisible (true);
+    }
 }
 
 void AMVSynthAudioProcessorEditor::timerCallback()
@@ -337,6 +419,9 @@ void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
 
     for (const auto& s : sections)
     {
+        if (s.page != currentPage)
+            continue;
+
         const auto r = s.bounds.toFloat();
         g.setColour (s.balkan ? colour::balkanPanel : colour::panel);
         g.fillRoundedRectangle (r, 8.0f);
@@ -402,22 +487,30 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
         auto group = cell.withSizeKeepingCentre (cell.getWidth(), size + 20);
         knob->slider.setBounds (group.removeFromTop (size).withSizeKeepingCentre (size, size));
         knob->label.setBounds (group);
-        knob->slider.setVisible (true);
-        knob->label.setVisible (true);
     }
 }
 
 void AMVSynthAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
-    area.removeFromTop (headerHeight);
+    auto tabs = area.removeFromTop (headerHeight).removeFromRight (190).reduced (0, 12);
+    tabs.removeFromRight (16);
+    fxTab.setBounds (tabs.removeFromRight (80));
+    tabs.removeFromRight (6);
+    synthTab.setBounds (tabs.removeFromRight (80));
 
     keyboard.setBounds (area.removeFromBottom (keyboardHeight));
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7
     area.reduce (margin, margin);
 
-    constexpr int numRows = 4;
-    const int rowHeight = (area.getHeight() - gap * (numRows - 1)) / numRows;
+    int numRows = 1;
+    for (const auto& s : sections)
+        if (s.page == currentPage)
+            numRows = juce::jmax (numRows, s.row + 1);
+
+    // The FX page has fewer rows; keep them the same height as on the main page.
+    const int layoutRows = juce::jmax (numRows, 4);
+    const int rowHeight = (area.getHeight() - gap * (layoutRows - 1)) / layoutRows;
 
     for (int row = 0; row < numRows; ++row)
     {
@@ -427,7 +520,7 @@ void AMVSynthAudioProcessorEditor::resized()
         float totalWeight = 0.0f;
         int count = 0;
         for (const auto& s : sections)
-            if (s.row == row)
+            if (s.page == currentPage && s.row == row)
             {
                 totalWeight += s.weight;
                 ++count;
@@ -441,7 +534,7 @@ void AMVSynthAudioProcessorEditor::resized()
 
         for (auto& s : sections)
         {
-            if (s.row != row)
+            if (s.page != currentPage || s.row != row)
                 continue;
 
             ++index;

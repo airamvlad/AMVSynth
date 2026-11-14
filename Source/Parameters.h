@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Arpeggiator.h"
+#include "Effects.h"
 #include "Tuning.h"
 
 namespace amv
@@ -40,6 +41,29 @@ inline constexpr auto arpOctaves = "arpOctaves";
 inline constexpr auto arpGate = "arpGate";
 inline constexpr auto arpAccent = "arpAccent";
 inline constexpr auto arpPolymeter = "arpPolymeter";
+inline constexpr auto distOn = "distOn";
+inline constexpr auto distType = "distType";
+inline constexpr auto distDrive = "distDrive";
+inline constexpr auto distMix = "distMix";
+inline constexpr auto gateOn = "gateOn";
+inline constexpr auto gateRate = "gateRate";
+inline constexpr auto gatePattern = "gatePattern";
+inline constexpr auto gateDepth = "gateDepth";
+inline constexpr auto gateLength = "gateLength";
+inline constexpr auto gateSmooth = "gateSmooth";
+inline constexpr auto delayOn = "delayOn";
+inline constexpr auto delayTime = "delayTime";
+inline constexpr auto delayFeedback = "delayFeedback";
+inline constexpr auto delayTone = "delayTone";
+inline constexpr auto delayMix = "delayMix";
+inline constexpr auto delayPingPong = "delayPingPong";
+inline constexpr auto reverbOn = "reverbOn";
+inline constexpr auto reverbSize = "reverbSize";
+inline constexpr auto reverbDamp = "reverbDamp";
+inline constexpr auto reverbMix = "reverbMix";
+inline constexpr auto duckOn = "duckOn";
+inline constexpr auto duckDepth = "duckDepth";
+inline constexpr auto duckRelease = "duckRelease";
 inline constexpr auto scaleRoot = "scaleRoot";
 inline constexpr auto scale = "scale";
 inline constexpr auto snap = "snap";
@@ -156,6 +180,43 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::arpGate, "Arp Gate", Range (10.0f, 150.0f), 60.0f, "%");
     add (id::arpAccent, "Arp Accent", Range (0.0f, 100.0f), 60.0f, "%");
     addBool (id::arpPolymeter, "Arp Polymeter", true);
+
+    // Effects
+    juce::StringArray distTypes, gatePatterns, delayTimes;
+    for (const auto* t : getDistortionTypes())
+        distTypes.add (t);
+    for (const auto& g : getGatePatterns())
+        gatePatterns.add (g.name);
+    for (const auto& d : getDelayTimes())
+        delayTimes.add (d.name);
+
+    addBool (id::distOn, "Distortion On", false);
+    addChoice (id::distType, "Distortion Type", distTypes, 0);
+    add (id::distDrive, "Distortion Drive", Range (0.0f, 36.0f), 12.0f, "dB");
+    add (id::distMix, "Distortion Mix", Range (0.0f, 100.0f), 100.0f, "%");
+
+    addBool (id::gateOn, "Gate On", false);
+    addChoice (id::gateRate, "Gate Rate", rateNames, 1);
+    addChoice (id::gatePattern, "Gate Pattern", gatePatterns, 0);
+    add (id::gateDepth, "Gate Depth", Range (0.0f, 100.0f), 100.0f, "%");
+    add (id::gateLength, "Gate Length", Range (5.0f, 100.0f), 50.0f, "%");
+    add (id::gateSmooth, "Gate Smooth", Range (0.5f, 40.0f), 4.0f, "ms");
+
+    addBool (id::delayOn, "Delay On", false);
+    addChoice (id::delayTime, "Delay Time", delayTimes, 2);
+    add (id::delayFeedback, "Delay Feedback", Range (0.0f, 95.0f), 45.0f, "%");
+    add (id::delayTone, "Delay Tone", skewed (300.0f, 16000.0f, 3000.0f), 4000.0f, "Hz");
+    add (id::delayMix, "Delay Mix", Range (0.0f, 100.0f), 30.0f, "%");
+    addBool (id::delayPingPong, "Delay Ping-Pong", true);
+
+    addBool (id::reverbOn, "Reverb On", false);
+    add (id::reverbSize, "Reverb Size", Range (0.0f, 1.0f), 0.6f);
+    add (id::reverbDamp, "Reverb Damp", Range (0.0f, 1.0f), 0.4f);
+    add (id::reverbMix, "Reverb Mix", Range (0.0f, 100.0f), 25.0f, "%");
+
+    addBool (id::duckOn, "Kick Duck On", false);
+    add (id::duckDepth, "Kick Duck Depth", Range (0.0f, 100.0f), 80.0f, "%");
+    add (id::duckRelease, "Kick Duck Release", Range (5.0f, 100.0f), 50.0f, "%");
 
     // Scale
     juce::StringArray roots, scaleNames;
