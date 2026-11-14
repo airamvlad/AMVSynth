@@ -2,7 +2,12 @@
 
 A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytrance. All sound is synthesized (wavetables and physical modelling), with no samples.
 
-Status: early skeleton. The plugin currently has one voice type, the Južni Vetar style keyboard lead, with a filter, two envelopes, glide, delayed vibrato and pitch bend.
+Status: early development. What works now:
+
+- Two models in the Balkan engine: the Južni Vetar style keyboard lead and an accordion with bellows, musette, register and key click controls
+- Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
+- Ornaments played automatically: grace note, mordent, trill and fall
+- Mono legato or 16 voices, glide, delayed vibrato, pitch bend, low-pass filter and two envelopes
 
 ## Formats
 
@@ -39,9 +44,11 @@ The results are in `build/AMVSynth_artefacts/Release`.
 ## Layout
 
 - `Source/Parameters.h`: all plugin parameters
-- `Source/SynthEngine.h`: voices, MIDI handling and DSP
+- `Source/Tuning.h`: scales and microtonal key mapping
+- `Source/SynthEngine.h`: voices, ornaments, MIDI handling and DSP
 - `Source/PluginProcessor.*`: the plugin itself
 - `Source/PluginEditor.*`: the interface
+- `tests/EngineTests.cpp`: offline checks, run with `ctest --test-dir build -C Release`
 
 ## License
 

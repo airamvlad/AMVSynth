@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(AMVSynth VERSION 0.1.0 LANGUAGES C CXX)
+project(AMVSynth VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,3 +53,19 @@ target_link_libraries(AMVSynth
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+option(AMV_BUILD_TESTS "Build the offline engine tests" ON)
+if(AMV_BUILD_TESTS)
+    enable_testing()
+    juce_add_console_app(AMVSynthTests PRODUCT_NAME "AMVSynthTests")
+    target_sources(AMVSynthTests PRIVATE tests/EngineTests.cpp)
+    target_include_directories(AMVSynthTests PRIVATE Source)
+    target_compile_definitions(AMVSynthTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(AMVSynthTests
+        PRIVATE
+            juce::juce_audio_basics
+            juce::juce_dsp
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+    add_test(NAME EngineTests COMMAND AMVSynthTests)
+endif()
