@@ -75,6 +75,7 @@ private:
     {
         juce::String title;
         bool balkan = false;
+        int page = 0;
         int row = 0;
         float weight = 1.0f;
         std::vector<Knob*> knobs;
@@ -92,6 +93,8 @@ private:
     Section& addSection (const juce::String& title, bool balkan, int row, float weight);
     void layoutSection (Section&);
     void showModel (int index);
+    void setPage (int page);
+    void updateVisibility();
     void timerCallback() override;
 
     AMVSynthAudioProcessor& processor;
@@ -105,6 +108,9 @@ private:
     std::vector<std::vector<Knob*>> modelKnobs;
     size_t engineSection = 0;
     int shownModel = -1;
+
+    juce::TextButton synthTab { "SYNTH" }, fxTab { "FX" };
+    int currentPage = 0, buildingPage = 0;
 
     PatternDisplay patternDisplay;
     juce::MidiKeyboardComponent keyboard;

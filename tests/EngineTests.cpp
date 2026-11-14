@@ -1,5 +1,6 @@
 // Offline checks for the tuning tables and the synth engine. Exits non-zero on failure.
 #include "Arpeggiator.h"
+#include "Effects.h"
 #include "SynthEngine.h"
 
 #include <cstdio>
@@ -217,6 +218,121 @@ int main()
 
         check (velocities.size() > 17 && velocities[14] > 0.9f && velocities[15] < 0.5f && velocities[16] > 0.9f && velocities[17] < 0.5f,
                "arp without polymeter restarts on the bar");
+    }
+
+    // Effects
+    {
+        const double sr = 48000.0;
+        const int block = 480;
+        const auto run = [&] (FxParams p, int blocks, bool impulse, auto&& perBlock)
+        {
+            FxChain fx;
+            fx.prepare (sr, block);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::AudioBuffer<float> buffer (2, block);
+                for (int i = 0; i < block; ++i)
+                {
+                    const float s = impulse ? ((b == 0 && i < 48) ? 0.8f : 0.0f)
+                                            : 0.5f * std::sin (juce::MathConstants<float>::twoPi * 220.0f * (float) (b * block + i) / (float) sr);
+                    buffer.setSample (0, i, s);
+                    buffer.setSample (1, i, s);
+                }
+
+                TransportInfo t;
+                t.playing = true;
+                t.bpm = 120.0;
+                t.ppq = (double) (b * block) / 24000.0;
+                fx.process (buffer, p, t);
+                perBlock (b, buffer);
+            }
+        };
+
+        // Everything on: finite and never above full scale.
+        {
+            FxParams p;
+            p.distOn = p.gateOn = p.delayOn = p.reverbOn = p.duckOn = true;
+            p.distDriveDb = 36.0f;
+            p.delayFeedback = 0.95f;
+            bool ok = true;
+            float peak = 0.0f;
+            for (int type = 0; type < 3; ++type)
+            {
+                p.distType = type;
+                run (p, 300, false, [&] (int, const juce::AudioBuffer<float>& b)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int i = 0; i < block; ++i)
+                        {
+                            ok = ok && std::isfinite (b.getSample (ch, i));
+                            peak = juce::jmax (peak, std::abs (b.getSample (ch, i)));
+                        }
+                });
+            }
+            check (ok && peak > 0.05f && peak <= 1.0f, "all effects at extreme settings stay finite and under full scale");
+        }
+
+        // Gate: sixteenths at 120 bpm are 6000 samples; open for the first half of each step.
+        {
+            FxParams p;
+            p.gateOn = true;
+            p.gateSmoothMs = 0.5f;
+            float openPeak = 0.0f, closedPeak = 0.0f;
+            run (p, 50, false, [&] (int b, const juce::AudioBuffer<float>& buf)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const int inStep = (b * block + i) % 6000;
+                    const float a = std::abs (buf.getSample (0, i));
+                    if (inStep > 500 && inStep < 2500)
+                        openPeak = juce::jmax (openPeak, a);
+                    if (inStep > 3500 && inStep < 5500)
+                        closedPeak = juce::jmax (closedPeak, a);
+                }
+            });
+            check (openPeak > 0.4f && closedPeak < 0.01f, "trance gate opens and closes on the grid");
+        }
+
+        // Delay: 3/16 at 120 bpm is 18000 samples; ping-pong sends the first echo left, the second right.
+        {
+            FxParams p;
+            p.delayOn = true;
+            p.delayMix = 1.0f;
+            float firstL = 0.0f, firstR = 0.0f, secondR = 0.0f, between = 0.0f;
+            run (p, 100, true, [&] (int b, const juce::AudioBuffer<float>& buf)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const int n = b * block + i;
+                    const float l = std::abs (buf.getSample (0, i)), r = std::abs (buf.getSample (1, i));
+                    if (n >= 17900 && n < 18400) { firstL = juce::jmax (firstL, l); firstR = juce::jmax (firstR, r); }
+                    if (n >= 35900 && n < 36400) secondR = juce::jmax (secondR, r);
+                    if (n >= 6000 && n < 15000) between = juce::jmax (between, juce::jmax (l, r));
+                }
+            });
+            check (firstL > 0.1f && firstR < 0.01f && secondR > 0.02f && between < 0.01f, "ping-pong delay echoes at 3/16 on alternating sides");
+        }
+
+        // Kick duck: quiet right after each beat, back to full level before the next.
+        {
+            FxParams p;
+            p.duckOn = true;
+            p.duckDepth = 1.0f;
+            float early = 0.0f, late = 0.0f;
+            run (p, 150, false, [&] (int b, const juce::AudioBuffer<float>& buf)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const int inBeat = (b * block + i) % 24000;
+                    const float a = std::abs (buf.getSample (0, i));
+                    if (b > 50 && inBeat > 300 && inBeat < 900)
+                        early = juce::jmax (early, a);
+                    if (inBeat > 18000 && inBeat < 23000)
+                        late = juce::jmax (late, a);
+                }
+            });
+            check (early < 0.1f && late > 0.4f, "kick duck dips on the beat and recovers");
+        }
     }
 
     std::printf ("%d failure(s)\n", failures);

@@ -11,6 +11,8 @@ void AMVSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 {
     engine.prepare (sampleRate, samplesPerBlock);
     arp.prepare (sampleRate);
+    fx.prepare (sampleRate, samplesPerBlock);
+    stereo.setSize (2, juce::jmax (1, samplesPerBlock));
     arpMidi.ensureSize (4096);
     engine.setParams (readParams());
     outputGain.reset (sampleRate, 0.02);
@@ -110,16 +112,68 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     arp.process (midi, arpMidi, buffer.getNumSamples(), ap, transport);
 
+    // The voices render in mono, the effects work in stereo.
+    const int numSamples = buffer.getNumSamples();
+    if (stereo.getNumSamples() < numSamples)
+        stereo.setSize (2, numSamples, false, false, true);
+
+    juce::AudioBuffer<float> work (stereo.getArrayOfWritePointers(), 2, numSamples);
+    work.clear();
+
     engine.setParams (readParams());
-    engine.process (buffer, arpMidi);
+    engine.process (work, arpMidi);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
-    outputGain.applyGain (buffer, buffer.getNumSamples());
+    outputGain.applyGain (work, numSamples);
 
-    // Safety clip so a resonant patch can never send more than full scale to the DAW.
+    fx.process (work, readFxParams(), transport);
+
+    if (buffer.getNumChannels() >= 2)
+    {
+        buffer.copyFrom (0, 0, work, 0, 0, numSamples);
+        buffer.copyFrom (1, 0, work, 1, 0, numSamples);
+    }
+    else if (buffer.getNumChannels() == 1)
+    {
+        buffer.copyFrom (0, 0, work, 0, 0, numSamples);
+        buffer.addFrom (0, 0, work, 1, 0, numSamples);
+        buffer.applyGain (0.5f);
+    }
+
+    // The limiter in the effect chain keeps peaks down; this clip is only a last safety net.
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         juce::FloatVectorOperations::clip (buffer.getWritePointer (ch), buffer.getReadPointer (ch),
-                                           -1.0f, 1.0f, buffer.getNumSamples());
+                                           -1.0f, 1.0f, numSamples);
+}
+
+amv::FxParams AMVSynthAudioProcessor::readFxParams() const
+{
+    using namespace amv;
+    FxParams p;
+    p.distOn = value (id::distOn) > 0.5f;
+    p.distType = juce::roundToInt (value (id::distType));
+    p.distDriveDb = value (id::distDrive);
+    p.distMix = value (id::distMix) * 0.01f;
+    p.gateOn = value (id::gateOn) > 0.5f;
+    p.gateRate = juce::roundToInt (value (id::gateRate));
+    p.gatePattern = juce::roundToInt (value (id::gatePattern));
+    p.gateDepth = value (id::gateDepth) * 0.01f;
+    p.gateLength = value (id::gateLength) * 0.01f;
+    p.gateSmoothMs = value (id::gateSmooth);
+    p.delayOn = value (id::delayOn) > 0.5f;
+    p.delayTime = juce::roundToInt (value (id::delayTime));
+    p.delayFeedback = value (id::delayFeedback) * 0.01f;
+    p.delayToneHz = value (id::delayTone);
+    p.delayMix = value (id::delayMix) * 0.01f;
+    p.delayPingPong = value (id::delayPingPong) > 0.5f;
+    p.reverbOn = value (id::reverbOn) > 0.5f;
+    p.reverbSize = value (id::reverbSize);
+    p.reverbDamp = value (id::reverbDamp);
+    p.reverbMix = value (id::reverbMix) * 0.01f;
+    p.duckOn = value (id::duckOn) > 0.5f;
+    p.duckDepth = value (id::duckDepth) * 0.01f;
+    p.duckRelease = value (id::duckRelease) * 0.01f;
+    return p;
 }
 
 juce::AudioProcessorEditor* AMVSynthAudioProcessor::createEditor()

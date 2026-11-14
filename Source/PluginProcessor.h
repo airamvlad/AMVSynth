@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "Arpeggiator.h"
+#include "Effects.h"
 #include "Parameters.h"
 #include "SynthEngine.h"
 
@@ -41,10 +42,13 @@ public:
 
 private:
     amv::EngineParams readParams() const;
+    amv::FxParams readFxParams() const;
     float value (const char* paramId) const;
 
     amv::SynthEngine engine;
     amv::Arpeggiator arp;
+    amv::FxChain fx;
+    juce::AudioBuffer<float> stereo;
     juce::MidiBuffer arpMidi;
     juce::SmoothedValue<float> outputGain;
 
