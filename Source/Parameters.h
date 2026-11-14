@@ -4,6 +4,7 @@
 
 #include "Arpeggiator.h"
 #include "Effects.h"
+#include "Modulation.h"
 #include "Tuning.h"
 #include "Wavetables.h"
 
@@ -115,6 +116,11 @@ inline constexpr auto subOctave = "subOctave";
 inline constexpr auto subShape = "subShape";
 inline constexpr auto noiseLevel = "noiseLevel";
 inline constexpr auto noiseColor = "noiseColor";
+
+// Modulation parameters are numbered from 1: lfo1Rate, macro3, mod2Amount and so on.
+inline juce::String lfo (int index, const char* suffix) { return "lfo" + juce::String (index + 1) + suffix; }
+inline juce::String macro (int index) { return "macro" + juce::String (index + 1); }
+inline juce::String slot (int index, const char* suffix) { return "mod" + juce::String (index + 1) + suffix; }
 } // namespace id
 
 inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -212,6 +218,37 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::subShape, "Sub Shape", Range (0.0f, 1.0f), 0.0f);
     add (id::noiseLevel, "Noise Level", Range (0.0f, 1.0f), 0.0f);
     add (id::noiseColor, "Noise Color", skewed (200.0f, 18000.0f, 2500.0f), 6000.0f, "Hz");
+
+    // Modulation
+    juce::StringArray lfoShapes, lfoDivisions, modSources, modDests;
+    for (const auto* n : getLfoShapes())
+        lfoShapes.add (n);
+    for (const auto& d : getLfoDivisions())
+        lfoDivisions.add (d.name);
+    for (const auto* n : getModSources())
+        modSources.add (n);
+    for (const auto* n : getModDests())
+        modDests.add (n);
+
+    for (int i = 0; i < mod::numLfos; ++i)
+    {
+        const auto name = "LFO " + juce::String (i + 1) + " ";
+        addChoice (id::lfo (i, "Shape").toRawUTF8(), (name + "Shape").toRawUTF8(), lfoShapes, 0);
+        add (id::lfo (i, "Rate").toRawUTF8(), (name + "Rate").toRawUTF8(), skewed (0.02f, 40.0f, 3.0f), i == 0 ? 5.0f : 0.5f, "Hz");
+        addBool (id::lfo (i, "Sync").toRawUTF8(), (name + "Sync").toRawUTF8(), false);
+        addChoice (id::lfo (i, "Division").toRawUTF8(), (name + "Division").toRawUTF8(), lfoDivisions, i == 0 ? 7 : 2);
+    }
+
+    for (int i = 0; i < mod::numMacros; ++i)
+        add (id::macro (i).toRawUTF8(), ("Macro " + juce::String (i + 1)).toRawUTF8(), Range (0.0f, 1.0f), 0.0f);
+
+    for (int i = 0; i < mod::numSlots; ++i)
+    {
+        const auto name = "Mod " + juce::String (i + 1) + " ";
+        addChoice (id::slot (i, "Source").toRawUTF8(), (name + "Source").toRawUTF8(), modSources, 0);
+        addChoice (id::slot (i, "Dest").toRawUTF8(), (name + "Destination").toRawUTF8(), modDests, i == 0 ? 1 : 0);
+        add (id::slot (i, "Amount").toRawUTF8(), (name + "Amount").toRawUTF8(), Range (-1.0f, 1.0f), 0.0f);
+    }
 
     // Arpeggiator
     juce::StringArray meterNames, rateNames, modeNames;

@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 
+#include "Modulation.h"
 #include "Tuning.h"
 #include "Wavetables.h"
 
@@ -56,6 +57,11 @@ struct EngineParams
     float subShape = 0.0f;     // 0 = sine, 1 = square
     float noiseLevel = 0.0f;
     float noiseColorHz = 6000.0f;
+
+    // Modulation
+    std::array<LfoParams, mod::numLfos> lfos;
+    std::array<float, mod::numMacros> modMacros {};
+    std::array<ModSlot, mod::numSlots> slots;
 
     // Juzni Vetar lead
     float tone = 0.55f;        // 0 = detuned saws, 1 = pulse
@@ -166,6 +172,8 @@ public:
             }
             subPhase = 0.0f;
             noiseLp = 0.0f;
+            lastFilterEnv = 0.0f;
+            modSnap = true;
             reedLp = 0.0f;
             clickLp = 0.0f;
             clickHp = 0.0f;
@@ -197,11 +205,61 @@ public:
         fltEnv.noteOff();
     }
 
-    /** Adds this voice to `out` (mono). `bend` is the pitch wheel offset in semitones. */
-    void render (float* out, int numSamples, const EngineParams& p, float bend)
+    /** Adds this voice to `out` (mono). `bend` is the pitch wheel offset in semitones.
+        `sources` holds the shared modulation sources (LFOs, mod wheel, macros) indexed by
+        mod::Source, or is null when no modulation slot is in use. */
+    void render (float* out, int numSamples, const EngineParams& base, float bend, const float* sources = nullptr)
     {
         if (! isActive())
             return;
+
+        // Apply the modulation matrix to a copy of the parameters for this chunk.
+        EngineParams modulated;
+        const EngineParams* current = &base;
+        float pitchTarget = 0.0f, gainTarget = 1.0f;
+
+        if (sources != nullptr)
+        {
+            float src[mod::numSources];
+            std::copy (sources, sources + mod::numSources, src);
+            src[mod::srcNone] = 0.0f;
+            src[mod::srcFilterEnv] = lastFilterEnv;
+            src[mod::srcVelocity] = velocity;
+
+            float dest[mod::numDests] {};
+            for (const auto& slot : base.slots)
+                if (slot.source > mod::srcNone && slot.source < mod::numSources && slot.dest >= 0 && slot.dest < mod::numDests)
+                    dest[slot.dest] += src[slot.source] * slot.amount;
+
+            const auto unit = [] (float v) { return juce::jlimit (0.0f, 1.0f, v); };
+            modulated = base;
+            modulated.cutoffHz = juce::jlimit (20.0f, 20000.0f, base.cutoffHz * std::exp2 (dest[mod::dstCutoff] * 5.0f));
+            modulated.resonance = unit (base.resonance + dest[mod::dstResonance]);
+            modulated.oscA.position = unit (base.oscA.position + dest[mod::dstOscAPosition]);
+            modulated.oscB.position = unit (base.oscB.position + dest[mod::dstOscBPosition]);
+            modulated.oscA.level = unit (base.oscA.level + dest[mod::dstOscALevel]);
+            modulated.oscB.level = unit (base.oscB.level + dest[mod::dstOscBLevel]);
+            modulated.engineLevel = unit (base.engineLevel + dest[mod::dstEngineLevel]);
+            modulated.noiseLevel = unit (base.noiseLevel + dest[mod::dstNoiseLevel]);
+            current = &modulated;
+
+            // Small amounts give fine pitch control, the full amount reaches two octaves.
+            const float pm = juce::jlimit (-1.0f, 1.0f, dest[mod::dstPitch]);
+            pitchTarget = pm * std::abs (pm) * 24.0f;
+            gainTarget = juce::jlimit (0.0f, 2.0f, 1.0f + dest[mod::dstVolume]);
+        }
+
+        if (modSnap)
+        {
+            modPitch = pitchTarget;
+            modGain = gainTarget;
+            modSnap = false;
+        }
+
+        // Pitch and volume glide to their new values over the chunk, so fast LFOs do not click.
+        const float pitchStep = (pitchTarget - modPitch) / (float) numSamples;
+        const float gainStep = (gainTarget - modGain) / (float) numSamples;
+        const EngineParams& p = *current;
 
         ampEnv.setParameters (p.amp);
         fltEnv.setParameters (p.flt);
@@ -213,6 +271,7 @@ public:
 
         // The filter is updated once per render call; the engine calls us in short chunks.
         const float envNow = fltEnv.getNextSample();
+        lastFilterEnv = envNow;
         for (int i = 1; i < numSamples; ++i)
             fltEnv.getNextSample();
 
@@ -226,7 +285,7 @@ public:
         if (p.engineLevel > 0.0f)
             prepareModel (mc, p, sr);
 
-        const float chunkInc = midiToHz (currentPitch + bend + 1.0f) / sr;
+        const float chunkInc = midiToHz (currentPitch + bend + juce::jmax (modPitch, pitchTarget) + 1.0f) / sr;
         OscCoeffs oscA, oscB;
         prepareOsc (oscA, p.oscA, chunkInc);
         prepareOsc (oscB, p.oscB, chunkInc);
@@ -250,7 +309,9 @@ public:
                 vibPhase -= 1.0f;
             vibTime += dt;
 
-            float pitch = currentPitch + bend + vib + ornamentOffset (p);
+            modPitch += pitchStep;
+            modGain += gainStep;
+            float pitch = currentPitch + bend + vib + ornamentOffset (p) + modPitch;
             ornTime += dt;
 
             if (! held)
@@ -300,7 +361,7 @@ public:
             }
 
             s = filter.processSample (0, s);
-            out[i] += s * ampEnv.getNextSample() * (0.35f + 0.65f * velocity);
+            out[i] += s * ampEnv.getNextSample() * (0.35f + 0.65f * velocity) * modGain;
         }
 
         if (! isActive())
@@ -718,6 +779,9 @@ private:
 
     OscPhases oscPhasesA {}, oscPhasesB {};
     float subPhase = 0.0f, noiseLp = 0.0f;
+
+    float lastFilterEnv = 0.0f, modPitch = 0.0f, modGain = 1.0f;
+    bool modSnap = true;
 };
 
 /** Voice allocation, tuning, ornaments, MIDI handling and rendering. */
@@ -739,6 +803,10 @@ public:
         bendSmooth = 0.0f;
         bendTarget = 0.0f;
         bendCoeff = 1.0f - std::exp (-1.0f / (0.004f * (float) sampleRate / (float) chunkSize));
+        wheelSmooth = 0.0f;
+        wheelTarget = 0.0f;
+        for (auto& lfo : lfos)
+            lfo.reset();
         heldNotes.clear();
         heldNotes.reserve (64);
     }
@@ -750,6 +818,10 @@ public:
 
         params = newParams;
         tuning.set (params.scaleRoot, params.scale, params.snap);
+
+        modActive = false;
+        for (const auto& slot : params.slots)
+            modActive = modActive || (slot.source != mod::srcNone && std::abs (slot.amount) > 1.0e-6f);
     }
 
     /** Fixes the random sequence used for ornament chance, for repeatable tests. */
@@ -757,9 +829,11 @@ public:
 
     const Tuning& getTuning() const noexcept { return tuning; }
 
-    void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi)
+    /** `transport` is only needed for tempo-synced LFOs. */
+    void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const TransportInfo& transport = {})
     {
         const int numSamples = buffer.getNumSamples();
+        blockTransport = transport;
         if ((int) mix.size() < numSamples)
             mix.resize ((size_t) numSamples);
 
@@ -795,11 +869,21 @@ private:
         {
             const int n = juce::jmin (chunkSize, end - start);
             bendSmooth += (bendTarget - bendSmooth) * bendCoeff;
+            wheelSmooth += (wheelTarget - wheelSmooth) * bendCoeff;
+
+            // The LFOs always run, so they keep their place when a slot is switched on.
+            float sources[mod::numSources] {};
+            const double ppq = blockTransport.ppq + (double) start / (double) engineSampleRate * blockTransport.bpm / 60.0;
+            for (size_t i = 0; i < lfos.size(); ++i)
+                sources[mod::srcLfo1 + (int) i] = lfos[i].next (n, (double) engineSampleRate, params.lfos[i], blockTransport, ppq);
+            sources[mod::srcModWheel] = wheelSmooth;
+            for (size_t i = 0; i < params.modMacros.size(); ++i)
+                sources[mod::srcMacro1 + (int) i] = params.modMacros[i];
 
             bool anyHeld = false;
             for (auto& v : voices)
             {
-                v.render (mix.data() + start, n, params, bendSmooth);
+                v.render (mix.data() + start, n, params, bendSmooth, modActive ? sources : nullptr);
                 anyHeld = anyHeld || v.isHeld();
             }
 
@@ -848,6 +932,8 @@ private:
             noteOff (m.getNoteNumber());
         else if (m.isPitchWheel())
             bendTarget = ((float) m.getPitchWheelValue() - 8192.0f) / 8192.0f * params.bendRange;
+        else if (m.isController() && m.getControllerNumber() == 1)
+            wheelTarget = (float) m.getControllerValue() / 127.0f;
         else if (m.isAllNotesOff() || m.isAllSoundOff())
             allNotesOff();
     }
@@ -947,5 +1033,10 @@ private:
     juce::uint64 counter = 0;
     float bendSmooth = 0.0f, bendTarget = 0.0f, bendCoeff = 1.0f;
     float engineSampleRate = 44100.0f, droneLevel = 0.0f, droneLp = 0.0f, dronePhase = 0.0f;
+
+    std::array<Lfo, mod::numLfos> lfos;
+    TransportInfo blockTransport;
+    float wheelSmooth = 0.0f, wheelTarget = 0.0f;
+    bool modActive = false;
 };
 } // namespace amv

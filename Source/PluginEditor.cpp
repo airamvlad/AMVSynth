@@ -198,8 +198,30 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     addSection ("NOISE", false, 2, 3.0f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
     addSection ("BALKAN ENGINE", true, 2, 2.0f).knobs = makeKnobs (true, { { id::engineLevel, "LEVEL" } });
 
-    // FX page.
+    // MOD page: two LFOs, four macros and the modulation matrix.
     buildingPage = 2;
+    for (int i = 0; i < mod::numLfos; ++i)
+    {
+        auto& s = addSection ("LFO " + juce::String (i + 1), false, 0, 3.0f);
+        s.columnWidth = 130;
+        s.column.push_back (&makeChoice (id::lfo (i, "Shape"), false)->box);
+        s.column.push_back (&makeToggle (id::lfo (i, "Sync"), "TEMPO SYNC", false)->button);
+        s.column.push_back (&makeChoice (id::lfo (i, "Division"), false)->box);
+        s.knobs = makeKnobs (false, { { id::lfo (i, "Rate"), "RATE" } });
+    }
+    addSection ("MACROS", false, 0, 5.0f).knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" },
+                                                                      { id::macro (2), "MACRO 3" }, { id::macro (3), "MACRO 4" } });
+    for (int i = 0; i < mod::numSlots; ++i)
+    {
+        auto& s = addSection ("MOD " + juce::String (i + 1), false, 1 + i / 3, 1.0f);
+        s.columnWidth = 175;
+        s.column.push_back (&makeChoice (id::slot (i, "Source"), false)->box);
+        s.column.push_back (&makeChoice (id::slot (i, "Dest"), false)->box);
+        s.knobs = makeKnobs (false, { { id::slot (i, "Amount"), "AMOUNT" } });
+    }
+
+    // FX page.
+    buildingPage = 3;
     {
         auto& s = addSection ("DISTORTION", false, 0, 4.0f);
         s.column.push_back (&makeToggle (id::distOn, "ON", false)->button);
@@ -232,7 +254,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
     buildingPage = 0;
 
-    const char* tabNames[] { "SYNTH", "OSC", "FX" };
+    const char* tabNames[] { "SYNTH", "OSC", "MOD", "FX" };
     for (size_t i = 0; i < tabs.size(); ++i)
     {
         auto& tab = tabs[i];
@@ -293,7 +315,7 @@ std::vector<AMVSynthAudioProcessorEditor::Knob*> AMVSynthAudioProcessorEditor::m
     return result;
 }
 
-AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (const char* paramId, const juce::String& text, bool balkan)
+AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (const juce::String& paramId, const juce::String& text, bool balkan)
 {
     auto toggle = std::make_unique<Toggle>();
     toggle->button.setButtonText (text);
@@ -304,7 +326,7 @@ AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (
     return toggles.back().get();
 }
 
-AMVSynthAudioProcessorEditor::Choice* AMVSynthAudioProcessorEditor::makeChoice (const char* paramId, bool balkan)
+AMVSynthAudioProcessorEditor::Choice* AMVSynthAudioProcessorEditor::makeChoice (const juce::String& paramId, bool balkan)
 {
     auto choice = std::make_unique<Choice>();
 
@@ -535,7 +557,9 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
         // Choices and toggles sit in a grid on the left, or fill the panel when there are no knobs.
         const int cols = s.columnsInColumn;
         const int rows = ((int) s.column.size() + cols - 1) / cols;
-        const int cellWidth = s.knobs.empty() ? inner.getWidth() / cols : juce::jmin (150, inner.getWidth() / 3);
+        const int cellWidth = s.knobs.empty() ? inner.getWidth() / cols
+                                              : s.columnWidth > 0 ? juce::jmin (s.columnWidth, inner.getWidth() * 3 / 5)
+                                                                  : juce::jmin (150, inner.getWidth() / 3);
         auto columnArea = inner.removeFromLeft (cellWidth * cols);
         inner.removeFromLeft (s.knobs.empty() ? 0 : 10);
 
@@ -574,7 +598,7 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
 void AMVSynthAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
-    auto tabArea = area.removeFromTop (headerHeight).removeFromRight (276).reduced (0, 12);
+    auto tabArea = area.removeFromTop (headerHeight).removeFromRight (362).reduced (0, 12);
     tabArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
