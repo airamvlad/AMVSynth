@@ -56,6 +56,13 @@ private:
         std::unique_ptr<APVTS::ButtonAttachment> attachment;
     };
 
+    /** Draws the accent groups of the selected arp meter as bars. */
+    struct PatternDisplay final : public juce::Component
+    {
+        void paint (juce::Graphics&) override;
+        int meter = 0;
+    };
+
     struct Choice
     {
         juce::ComboBox box;
@@ -73,6 +80,7 @@ private:
         std::vector<Knob*> knobs;
         std::vector<juce::Component*> column;
         int columnsInColumn = 1;
+        juce::Component* display = nullptr; // optional wide component between the column and the knobs
         juce::Rectangle<int> bounds;
     };
 
@@ -98,6 +106,7 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
+    PatternDisplay patternDisplay;
     juce::MidiKeyboardComponent keyboard;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessorEditor)

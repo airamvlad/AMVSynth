@@ -123,6 +123,10 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
         modelKnobs.push_back (makeKnobs (true, { { id::tone, "TONE" }, { id::pulseWidth, "WIDTH" }, { id::detune, "DETUNE" }, { id::sub, "SUB" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::accBellows, "BELLOWS" }, { id::accMusette, "MUSETTE" }, { id::accRegister, "REGISTER" }, { id::accClick, "CLICK" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::gusBow, "BOW" }, { id::gusPosition, "POSITION" }, { id::gusRasp, "RASP" }, { id::gusNasal, "NASAL" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::fruBreath, "BREATH" }, { id::fruOverblow, "OVERBLOW" }, { id::fruNoise, "NOISE" }, { id::fruChiff, "CHIFF" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::kavBreath, "BREATH" }, { id::kavOverblow, "OVERBLOW" }, { id::kavNoise, "NOISE" }, { id::kavThroat, "THROAT" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::gajDrone, "DRONE" }, { id::gajDroneTune, "DRONE TUNE" }, { id::gajBag, "BAG" }, { id::gajEdge, "EDGE" } }));
     }
     {
         auto& s = addSection ("PERFORMANCE", false, 0, 6.0f);
@@ -148,11 +152,25 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         s.knobs = makeKnobs (true, { { id::ornSpeed, "SPEED" }, { id::ornAmount, "AMOUNT" }, { id::ornChance, "CHANCE" } });
     }
 
-    // Row 2: filter, envelopes, output.
-    addSection ("FILTER", false, 2, 3.4f).knobs = makeKnobs (false, { { id::cutoff, "CUTOFF" }, { id::resonance, "RES" }, { id::filterEnv, "ENV" } });
-    addSection ("AMP ENV", false, 2, 4.4f).knobs = makeKnobs (false, { { id::ampA, "A" }, { id::ampD, "D" }, { id::ampS, "S" }, { id::ampR, "R" } });
-    addSection ("FILTER ENV", false, 2, 4.4f).knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
-    addSection ("OUT", false, 2, 1.4f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
+    // Row 2: the odd-meter arpeggiator.
+    {
+        auto& s = addSection ("ODD-METER ARP", true, 2, 1.0f);
+        s.columnsInColumn = 3;
+        s.column.push_back (&makeToggle (id::arpOn, "ARP ON", true)->button);
+        s.column.push_back (&makeChoice (id::arpMeter, true)->box);
+        s.column.push_back (&makeChoice (id::arpRate, true)->box);
+        s.column.push_back (&makeToggle (id::arpPolymeter, "POLYMETER", true)->button);
+        s.column.push_back (&makeChoice (id::arpMode, true)->box);
+        s.display = &patternDisplay;
+        s.knobs = makeKnobs (true, { { id::arpOctaves, "OCTAVES" }, { id::arpGate, "GATE" }, { id::arpAccent, "ACCENT" } });
+        addAndMakeVisible (patternDisplay);
+    }
+
+    // Row 3: filter, envelopes, output.
+    addSection ("FILTER", false, 3, 3.4f).knobs = makeKnobs (false, { { id::cutoff, "CUTOFF" }, { id::resonance, "RES" }, { id::filterEnv, "ENV" } });
+    addSection ("AMP ENV", false, 3, 4.4f).knobs = makeKnobs (false, { { id::ampA, "A" }, { id::ampD, "D" }, { id::ampS, "S" }, { id::ampR, "R" } });
+    addSection ("FILTER ENV", false, 3, 4.4f).knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
+    addSection ("OUT", false, 3, 1.4f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
 
     keyboard.setAvailableRange (36, 96);
     keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, colour::red);
@@ -163,9 +181,9 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     startTimerHz (20);
 
     setResizable (true, true);
-    getConstrainer()->setFixedAspectRatio (1040.0 / 680.0);
-    setResizeLimits (780, 510, 2080, 1360);
-    setSize (1040, 680);
+    getConstrainer()->setFixedAspectRatio (1040.0 / 840.0);
+    setResizeLimits (780, 630, 2080, 1680);
+    setSize (1040, 840);
 }
 
 AMVSynthAudioProcessorEditor::~AMVSynthAudioProcessorEditor()
@@ -258,6 +276,41 @@ void AMVSynthAudioProcessorEditor::timerCallback()
 {
     // The model can also change from host automation or a loaded preset.
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::model)->load()));
+
+    const int meter = juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::arpMeter)->load());
+    if (meter != patternDisplay.meter)
+    {
+        patternDisplay.meter = meter;
+        patternDisplay.repaint();
+    }
+}
+
+void AMVSynthAudioProcessorEditor::PatternDisplay::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    auto area = getLocalBounds().toFloat();
+    g.setColour (colour::background);
+    g.fillRoundedRectangle (area, 6.0f);
+    area.reduce (8.0f, 8.0f);
+
+    const auto& groups = getMeters()[(size_t) juce::jlimit (0, (int) getMeters().size() - 1, meter)].groups;
+    const int steps = Arpeggiator::patternLength (meter);
+    const float groupGap = 8.0f, stepGap = 3.0f;
+    const float stepWidth = (area.getWidth() - groupGap * (float) (groups.size() - 1) - stepGap * (float) (steps - (int) groups.size())) / (float) steps;
+    float x = area.getX();
+
+    for (int group : groups)
+    {
+        for (int i = 0; i < group; ++i)
+        {
+            const float height = area.getHeight() * (i == 0 ? 1.0f : 0.55f);
+            g.setColour (i == 0 ? colour::red : colour::teal.withAlpha (0.55f));
+            g.fillRoundedRectangle (x, area.getBottom() - height, stepWidth, height, 2.5f);
+            x += stepWidth + stepGap;
+        }
+
+        x += groupGap - stepGap;
+    }
 }
 
 void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
@@ -331,6 +384,12 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
         }
     }
 
+    if (s.display != nullptr)
+    {
+        s.display->setBounds (inner.removeFromLeft (inner.getWidth() * 2 / 5).reduced (0, 6));
+        inner.removeFromLeft (10);
+    }
+
     if (s.knobs.empty())
         return;
 
@@ -357,7 +416,7 @@ void AMVSynthAudioProcessorEditor::resized()
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7
     area.reduce (margin, margin);
 
-    constexpr int numRows = 3;
+    constexpr int numRows = 4;
     const int rowHeight = (area.getHeight() - gap * (numRows - 1)) / numRows;
 
     for (int row = 0; row < numRows; ++row)
