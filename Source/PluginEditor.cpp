@@ -198,8 +198,30 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     addSection ("NOISE", false, 2, 3.0f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
     addSection ("BALKAN ENGINE", true, 2, 2.0f).knobs = makeKnobs (true, { { id::engineLevel, "LEVEL" } });
 
-    // FX page.
+    // MOD page: two LFOs, four macros and the modulation matrix.
     buildingPage = 2;
+    for (int i = 0; i < mod::numLfos; ++i)
+    {
+        auto& s = addSection ("LFO " + juce::String (i + 1), false, 0, 3.0f);
+        s.columnWidth = 130;
+        s.column.push_back (&makeChoice (id::lfo (i, "Shape"), false)->box);
+        s.column.push_back (&makeToggle (id::lfo (i, "Sync"), "TEMPO SYNC", false)->button);
+        s.column.push_back (&makeChoice (id::lfo (i, "Division"), false)->box);
+        s.knobs = makeKnobs (false, { { id::lfo (i, "Rate"), "RATE" } });
+    }
+    addSection ("MACROS", false, 0, 5.0f).knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" },
+                                                                      { id::macro (2), "MACRO 3" }, { id::macro (3), "MACRO 4" } });
+    for (int i = 0; i < mod::numSlots; ++i)
+    {
+        auto& s = addSection ("MOD " + juce::String (i + 1), false, 1 + i / 3, 1.0f);
+        s.columnWidth = 175;
+        s.column.push_back (&makeChoice (id::slot (i, "Source"), false)->box);
+        s.column.push_back (&makeChoice (id::slot (i, "Dest"), false)->box);
+        s.knobs = makeKnobs (false, { { id::slot (i, "Amount"), "AMOUNT" } });
+    }
+
+    // FX page.
+    buildingPage = 3;
     {
         auto& s = addSection ("DISTORTION", false, 0, 4.0f);
         s.column.push_back (&makeToggle (id::distOn, "ON", false)->button);
@@ -232,7 +254,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
     buildingPage = 0;
 
-    const char* tabNames[] { "SYNTH", "OSC", "FX" };
+    const char* tabNames[] { "SYNTH", "OSC", "MOD", "FX" };
     for (size_t i = 0; i < tabs.size(); ++i)
     {
         auto& tab = tabs[i];
@@ -246,6 +268,59 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         addAndMakeVisible (tab);
     }
     tabs[0].setToggleState (true, juce::dontSendNotification);
+
+    // Preset bar in the header.
+    for (int i = 0; i < processor.getNumPrograms(); ++i)
+        presetBox.addItem (processor.getProgramName (i), i + 1);
+    presetBox.setTextWhenNothingSelected ("User preset");
+    presetBox.onChange = [this]
+    {
+        const int index = presetBox.getSelectedId() - 1;
+        if (index >= 0 && index != shownPreset)
+            selectPreset (index);
+    };
+    prevPreset.onClick = [this] { selectPreset ((juce::jmax (0, shownPreset) + processor.getNumPrograms() - 1) % processor.getNumPrograms()); };
+    nextPreset.onClick = [this] { selectPreset ((shownPreset + 1) % processor.getNumPrograms()); };
+
+    const auto presetFolder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("AMVSynth Presets");
+    savePreset.onClick = [this, presetFolder]
+    {
+        presetFolder.createDirectory();
+        fileChooser = std::make_unique<juce::FileChooser> ("Save preset", presetFolder, "*.amvpreset");
+        fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                                  [this] (const juce::FileChooser& chooser)
+                                  {
+                                      const auto file = chooser.getResult();
+                                      if (file != juce::File())
+                                          processor.savePresetFile (file.withFileExtension ("amvpreset"));
+                                  });
+    };
+    loadPreset.onClick = [this, presetFolder]
+    {
+        fileChooser = std::make_unique<juce::FileChooser> ("Load preset", presetFolder, "*.amvpreset");
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this] (const juce::FileChooser& chooser)
+                                  {
+                                      const auto file = chooser.getResult();
+                                      if (file.existsAsFile() && processor.loadPresetFile (file))
+                                      {
+                                          shownPreset = -1;
+                                          presetBox.setSelectedId (0, juce::dontSendNotification);
+                                          presetBox.setTextWhenNothingSelected (file.getFileNameWithoutExtension());
+                                      }
+                                  });
+    };
+
+    presetBox.setColour (juce::ComboBox::outlineColourId, colour::panelBorder);
+    addAndMakeVisible (presetBox);
+    for (auto* button : { &prevPreset, &nextPreset, &savePreset, &loadPreset })
+    {
+        button->setColour (juce::TextButton::buttonColourId, colour::header);
+        button->setColour (juce::TextButton::textColourOffId, colour::dimText);
+        addAndMakeVisible (*button);
+    }
+    shownPreset = processor.getCurrentProgram();
+    presetBox.setSelectedId (shownPreset + 1, juce::dontSendNotification);
 
     keyboard.setAvailableRange (36, 96);
     keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, colour::red);
@@ -293,7 +368,7 @@ std::vector<AMVSynthAudioProcessorEditor::Knob*> AMVSynthAudioProcessorEditor::m
     return result;
 }
 
-AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (const char* paramId, const juce::String& text, bool balkan)
+AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (const juce::String& paramId, const juce::String& text, bool balkan)
 {
     auto toggle = std::make_unique<Toggle>();
     toggle->button.setButtonText (text);
@@ -304,7 +379,7 @@ AMVSynthAudioProcessorEditor::Toggle* AMVSynthAudioProcessorEditor::makeToggle (
     return toggles.back().get();
 }
 
-AMVSynthAudioProcessorEditor::Choice* AMVSynthAudioProcessorEditor::makeChoice (const char* paramId, bool balkan)
+AMVSynthAudioProcessorEditor::Choice* AMVSynthAudioProcessorEditor::makeChoice (const juce::String& paramId, bool balkan)
 {
     auto choice = std::make_unique<Choice>();
 
@@ -328,6 +403,13 @@ AMVSynthAudioProcessorEditor::Section& AMVSynthAudioProcessorEditor::addSection 
     section.weight = weight;
     sections.push_back (std::move (section));
     return sections.back();
+}
+
+void AMVSynthAudioProcessorEditor::selectPreset (int index)
+{
+    shownPreset = index;
+    processor.setCurrentProgram (index);
+    presetBox.setSelectedId (index + 1, juce::dontSendNotification);
 }
 
 void AMVSynthAudioProcessorEditor::showModel (int index)
@@ -386,6 +468,13 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
 
 void AMVSynthAudioProcessorEditor::timerCallback()
 {
+    // The host can change the program too.
+    if (shownPreset >= 0 && processor.getCurrentProgram() != shownPreset)
+    {
+        shownPreset = processor.getCurrentProgram();
+        presetBox.setSelectedId (shownPreset + 1, juce::dontSendNotification);
+    }
+
     // The model can also change from host automation or a loaded preset.
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::model)->load()));
 
@@ -496,7 +585,7 @@ void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("AMVSYNTH", logo.removeFromLeft (140), juce::Justification::centredLeft);
     g.setColour (colour::dimText);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("v" JucePlugin_VersionString "  Balkan psy synthesizer", logo.removeFromLeft (260), juce::Justification::centredLeft);
+    g.drawText ("v" JucePlugin_VersionString, logo.removeFromLeft (50), juce::Justification::centredLeft);
 
     for (const auto& s : sections)
     {
@@ -535,7 +624,9 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
         // Choices and toggles sit in a grid on the left, or fill the panel when there are no knobs.
         const int cols = s.columnsInColumn;
         const int rows = ((int) s.column.size() + cols - 1) / cols;
-        const int cellWidth = s.knobs.empty() ? inner.getWidth() / cols : juce::jmin (150, inner.getWidth() / 3);
+        const int cellWidth = s.knobs.empty() ? inner.getWidth() / cols
+                                              : s.columnWidth > 0 ? juce::jmin (s.columnWidth, inner.getWidth() * 3 / 5)
+                                                                  : juce::jmin (150, inner.getWidth() / 3);
         auto columnArea = inner.removeFromLeft (cellWidth * cols);
         inner.removeFromLeft (s.knobs.empty() ? 0 : 10);
 
@@ -574,13 +665,26 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
 void AMVSynthAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
-    auto tabArea = area.removeFromTop (headerHeight).removeFromRight (276).reduced (0, 12);
-    tabArea.removeFromRight (16);
+    auto headerArea = area.removeFromTop (headerHeight).reduced (0, 12);
+    headerArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
-        tabs[i].setBounds (tabArea.removeFromRight (80));
-        tabArea.removeFromRight (6);
+        tabs[i].setBounds (headerArea.removeFromRight (70));
+        headerArea.removeFromRight (6);
     }
+
+    // The preset bar fills the space between the logo and the tabs.
+    headerArea.removeFromLeft (250);
+    headerArea.removeFromRight (14);
+    loadPreset.setBounds (headerArea.removeFromRight (50));
+    headerArea.removeFromRight (4);
+    savePreset.setBounds (headerArea.removeFromRight (50));
+    headerArea.removeFromRight (8);
+    prevPreset.setBounds (headerArea.removeFromLeft (26));
+    headerArea.removeFromLeft (4);
+    nextPreset.setBounds (headerArea.removeFromRight (26));
+    headerArea.removeFromRight (4);
+    presetBox.setBounds (headerArea);
 
     keyboard.setBounds (area.removeFromBottom (keyboardHeight));
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7

@@ -6,6 +6,15 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
       apvts (*this, nullptr, "AMVSynth", amv::createParameterLayout())
 {
     amv::WavetableBank::get(); // build the wavetables here, not on the audio thread
+
+    using namespace amv;
+    const auto ref = [this] (const juce::String& paramId) { return apvts.getRawParameterValue (paramId); };
+    for (int i = 0; i < mod::numLfos; ++i)
+        lfoRefs[(size_t) i] = { ref (id::lfo (i, "Shape")), ref (id::lfo (i, "Rate")), ref (id::lfo (i, "Sync")), ref (id::lfo (i, "Division")) };
+    for (int i = 0; i < mod::numMacros; ++i)
+        macroRefs[(size_t) i] = ref (id::macro (i));
+    for (int i = 0; i < mod::numSlots; ++i)
+        slotRefs[(size_t) i] = { ref (id::slot (i, "Source")), ref (id::slot (i, "Dest")), ref (id::slot (i, "Amount")) };
 }
 
 void AMVSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -73,6 +82,14 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.noiseLevel = value (id::noiseLevel);
     p.noiseColorHz = value (id::noiseColor);
 
+    for (size_t i = 0; i < lfoRefs.size(); ++i)
+        p.lfos[i] = { juce::roundToInt (lfoRefs[i].shape->load()), lfoRefs[i].rate->load(), lfoRefs[i].sync->load() > 0.5f,
+                      juce::roundToInt (lfoRefs[i].division->load()) };
+    for (size_t i = 0; i < macroRefs.size(); ++i)
+        p.modMacros[i] = macroRefs[i]->load();
+    for (size_t i = 0; i < slotRefs.size(); ++i)
+        p.slots[i] = { juce::roundToInt (slotRefs[i].source->load()), juce::roundToInt (slotRefs[i].dest->load()), slotRefs[i].amount->load() };
+
     p.tone = value (id::tone);
     p.pulseWidth = value (id::pulseWidth);
     p.detuneCents = value (id::detune);
@@ -133,7 +150,7 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     work.clear();
 
     engine.setParams (readParams());
-    engine.process (work, arpMidi);
+    engine.process (work, arpMidi, transport);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
     outputGain.applyGain (work, numSamples);
@@ -193,9 +210,27 @@ juce::AudioProcessorEditor* AMVSynthAudioProcessor::createEditor()
     return new AMVSynthAudioProcessorEditor (*this);
 }
 
+void AMVSynthAudioProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = amv::getFactoryPresets();
+    if (index < 0 || index >= (int) presets.size())
+        return;
+
+    currentPreset = index;
+    amv::applyPreset (apvts, presets[(size_t) index]);
+}
+
+const juce::String AMVSynthAudioProcessor::getProgramName (int index)
+{
+    const auto& presets = amv::getFactoryPresets();
+    return index >= 0 && index < (int) presets.size() ? juce::String (presets[(size_t) index].name) : juce::String();
+}
+
 void AMVSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
+    auto state = apvts.copyState();
+    state.setProperty ("preset", currentPreset, nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
@@ -203,7 +238,29 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+        {
+            const auto state = juce::ValueTree::fromXml (*xml);
+            currentPreset = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("preset", 0));
+            apvts.replaceState (state);
+        }
+}
+
+bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)
+{
+    const auto xml = apvts.copyState().createXml();
+    return xml != nullptr && xml->writeTo (file);
+}
+
+bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
+{
+    const auto xml = juce::parseXML (file);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return false;
+
+    // Start from the defaults so a file from an older version leaves no stale values behind.
+    amv::applyPreset (apvts, amv::getFactoryPresets().front());
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    return true;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

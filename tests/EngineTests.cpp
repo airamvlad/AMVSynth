@@ -1,6 +1,7 @@
 // Offline checks for the tuning tables and the synth engine. Exits non-zero on failure.
 #include "Arpeggiator.h"
 #include "Effects.h"
+#include "Presets.h"
 #include "SynthEngine.h"
 
 #include <cstdio>
@@ -15,6 +16,30 @@ void check (bool ok, const char* what)
     if (! ok)
         ++failures;
 }
+
+/** Just enough of a plugin to own the real parameter set. */
+struct ParameterHost final : public juce::AudioProcessor
+{
+    const juce::String getName() const override { return "test"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+    using AudioProcessor::processBlock;
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+
+    juce::AudioProcessorValueTreeState apvts { *this, nullptr, "AMVSynth", amv::createParameterLayout() };
+};
 
 bool near (float a, float b, float tolerance = 0.001f) { return std::abs (a - b) < tolerance; }
 
@@ -410,6 +435,161 @@ int main()
         base.oscA.level = 0.5f;
         const auto layered = render (base);
         check (layered.finite && ! near (layered.peak, reference.peak, 1.0e-4f), "oscillators layer with the Balkan engine");
+    }
+
+    // Modulation
+    {
+        const double sr = 48000.0;
+        TransportInfo stopped, playing;
+        playing.playing = true;
+        playing.bpm = 120.0;
+
+        // A free 10 Hz sine LFO crosses zero upwards 10 times a second.
+        {
+            Lfo lfo;
+            LfoParams lp;
+            lp.rateHz = 10.0f;
+            int crossings = 0;
+            float last = -1.0f, lowest = 0.0f, highest = 0.0f;
+            for (int i = 0; i < 1500; ++i)
+            {
+                const float v = lfo.next (32, sr, lp, stopped, 0.0);
+                if (last < 0.0f && v >= 0.0f)
+                    ++crossings;
+                last = v;
+                lowest = juce::jmin (lowest, v);
+                highest = juce::jmax (highest, v);
+            }
+            check (crossings == 10 && near (lowest, -1.0f, 0.01f) && near (highest, 1.0f, 0.01f), "free LFO runs at its rate over the full range");
+        }
+
+        // A synced LFO follows the host position.
+        {
+            Lfo lfo;
+            LfoParams lp;
+            lp.sync = true;
+            lp.division = 5; // 1/4
+            lp.shape = 2;    // saw, falling from 1 to -1
+            check (near (lfo.next (32, sr, lp, playing, 8.0), 1.0f) && near (lfo.next (32, sr, lp, playing, 8.5), 0.0f)
+                       && near (lfo.next (32, sr, lp, playing, 8.75), -0.5f),
+                   "synced LFO follows the host position");
+
+            lp.shape = 4;
+            const float a = lfo.next (32, sr, lp, playing, 3.2), b = lfo.next (32, sr, lp, playing, 3.9), c = lfo.next (32, sr, lp, playing, 4.1);
+            const float again = lfo.next (32, sr, lp, playing, 3.5);
+            check (near (a, b) && ! near (a, c) && near (a, again) && std::abs (a) <= 1.0f, "random LFO holds one repeatable value per cycle");
+        }
+
+        EngineParams base;
+        base.vibDepthCents = 0.0f;
+        const auto reference = render (base);
+
+        // Slots without a source or amount change nothing.
+        {
+            auto p = base;
+            p.slots[0] = { mod::srcNone, mod::dstVolume, 1.0f };
+            p.slots[1] = { mod::srcLfo1, mod::dstVolume, 0.0f };
+            check (near (render (p).peak, reference.peak, 1.0e-6f), "unused modulation slots leave the sound alone");
+        }
+
+        // A macro on volume scales the level: fully down is silent.
+        {
+            auto p = base;
+            p.modMacros[0] = 1.0f;
+            p.slots[0] = { mod::srcMacro1, mod::dstVolume, -1.0f };
+            const auto muted = render (p);
+            p.slots[0].amount = -0.5f;
+            const auto half = render (p);
+            check (muted.peak < 1.0e-6f && near (half.peak, reference.peak * 0.5f, reference.peak * 0.02f), "macro to volume scales the level");
+        }
+
+        // Everything at once, at full amounts, stays finite and bounded.
+        {
+            auto p = base;
+            p.oscA.level = 0.6f;
+            p.oscB.level = 0.6f;
+            p.noiseLevel = 0.2f;
+            p.lfos[0] = { 3, 31.0f, false, 0 };
+            p.lfos[1] = { 4, 9.0f, false, 0 };
+            p.modMacros = { 1.0f, 0.5f, 0.2f, 0.9f };
+            p.slots[0] = { mod::srcLfo1, mod::dstPitch, 1.0f };
+            p.slots[1] = { mod::srcLfo2, mod::dstCutoff, 1.0f };
+            p.slots[2] = { mod::srcFilterEnv, mod::dstOscAPosition, 1.0f };
+            p.slots[3] = { mod::srcVelocity, mod::dstResonance, 1.0f };
+            p.slots[4] = { mod::srcMacro1, mod::dstOscBLevel, -1.0f };
+            p.slots[5] = { mod::srcLfo1, mod::dstVolume, 1.0f };
+            const auto r = render (p);
+            check (r.finite && r.peak > 0.02f && r.peak < 20.0f && r.tailPeak < 0.001f, "full modulation matrix stays finite" /* full resonance is loud before the limiter */);
+        }
+
+        // The mod wheel opens the filter.
+        {
+            const auto wheel = [] (int value)
+            {
+                SynthEngine engine;
+                engine.prepare (48000.0, 512);
+                EngineParams p;
+                p.cutoffHz = 200.0f;
+                p.filterEnv = 0.0f;
+                p.vibDepthCents = 0.0f;
+                p.slots[0] = { mod::srcModWheel, mod::dstCutoff, 1.0f };
+                engine.setParams (p);
+                double energy = 0.0;
+                for (int block = 0; block < 60; ++block)
+                {
+                    juce::MidiBuffer midi;
+                    if (block == 0)
+                    {
+                        midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, value), 0);
+                        midi.addEvent (juce::MidiMessage::noteOn (1, 50, 0.9f), 1);
+                    }
+                    juce::AudioBuffer<float> buffer (1, 512);
+                    buffer.clear();
+                    engine.process (buffer, midi);
+                    if (block > 20)
+                        for (int i = 1; i < 512; ++i)
+                        {
+                            const double d = buffer.getSample (0, i) - buffer.getSample (0, i - 1);
+                            energy += d * d; // the sample to sample difference grows with brightness
+                        }
+                }
+                return energy;
+            };
+            check (wheel (127) > wheel (0) * 4.0, "mod wheel to cutoff opens the filter");
+        }
+    }
+
+    // Factory presets
+    {
+        juce::ScopedJuceInitialiser_GUI gui;
+        ParameterHost host;
+        const auto& presets = getFactoryPresets();
+        bool valid = true, unique = true;
+
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            for (size_t j = 0; j < i; ++j)
+                unique = unique && juce::String (presets[i].name) != presets[j].name;
+
+            for (const auto& [paramId, value] : presets[i].values)
+            {
+                auto* p = host.apvts.getParameter (paramId);
+                const bool ok = p != nullptr && host.apvts.getParameterRange (paramId).getRange().expanded (1.0e-4f).contains (value);
+                if (! ok)
+                    std::printf ("      %s: %s = %f\n", presets[i].name, paramId.toRawUTF8(), (double) value);
+                valid = valid && ok;
+            }
+        }
+        check (presets.size() >= 16 && unique, "factory presets have unique names");
+        check (valid, "every preset value names a real parameter and is in range");
+
+        // Applying a preset sets its values and resets everything else.
+        applyPreset (host.apvts, presets[1]);
+        const bool applied = near (host.apvts.getRawParameterValue (id::scale)->load(), 1.0f) && host.apvts.getRawParameterValue (id::delayOn)->load() > 0.5f;
+        applyPreset (host.apvts, presets[0]);
+        const bool reset = near (host.apvts.getRawParameterValue (id::scale)->load(), 0.0f) && host.apvts.getRawParameterValue (id::delayOn)->load() < 0.5f
+                               && near (host.apvts.getRawParameterValue (id::cutoff)->load(), 3200.0f, 1.0f);
+        check (applied && reset, "applying a preset sets its values and Init restores the defaults");
     }
 
     std::printf ("%d failure(s)\n", failures);
