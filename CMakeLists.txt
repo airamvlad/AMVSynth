@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(AMVSynth VERSION 0.6.0 LANGUAGES C CXX)
+project(AMVSynth VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,8 +64,21 @@ if(AMV_BUILD_TESTS)
     target_link_libraries(AMVSynthTests
         PRIVATE
             juce::juce_audio_basics
+            juce::juce_audio_processors
             juce::juce_dsp
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
     add_test(NAME EngineTests COMMAND AMVSynthTests)
+
+    # Plays the factory presets through the plugin itself.
+    juce_add_console_app(AMVSynthPresetTests PRODUCT_NAME "AMVSynthPresetTests")
+    target_sources(AMVSynthPresetTests PRIVATE tests/PresetTests.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+    target_include_directories(AMVSynthPresetTests PRIVATE Source)
+    target_compile_definitions(AMVSynthPresetTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_VersionString="${PROJECT_VERSION}")
+    target_link_libraries(AMVSynthPresetTests
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_dsp
+            juce::juce_recommended_config_flags)
+    add_test(NAME PresetTests COMMAND AMVSynthPresetTests)
 endif()

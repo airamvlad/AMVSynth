@@ -210,9 +210,27 @@ juce::AudioProcessorEditor* AMVSynthAudioProcessor::createEditor()
     return new AMVSynthAudioProcessorEditor (*this);
 }
 
+void AMVSynthAudioProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = amv::getFactoryPresets();
+    if (index < 0 || index >= (int) presets.size())
+        return;
+
+    currentPreset = index;
+    amv::applyPreset (apvts, presets[(size_t) index]);
+}
+
+const juce::String AMVSynthAudioProcessor::getProgramName (int index)
+{
+    const auto& presets = amv::getFactoryPresets();
+    return index >= 0 && index < (int) presets.size() ? juce::String (presets[(size_t) index].name) : juce::String();
+}
+
 void AMVSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
+    auto state = apvts.copyState();
+    state.setProperty ("preset", currentPreset, nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
@@ -220,7 +238,29 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+        {
+            const auto state = juce::ValueTree::fromXml (*xml);
+            currentPreset = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("preset", 0));
+            apvts.replaceState (state);
+        }
+}
+
+bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)
+{
+    const auto xml = apvts.copyState().createXml();
+    return xml != nullptr && xml->writeTo (file);
+}
+
+bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
+{
+    const auto xml = juce::parseXML (file);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return false;
+
+    // Start from the defaults so a file from an older version leaves no stale values behind.
+    amv::applyPreset (apvts, amv::getFactoryPresets().front());
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    return true;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

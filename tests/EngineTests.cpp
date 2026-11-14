@@ -1,6 +1,7 @@
 // Offline checks for the tuning tables and the synth engine. Exits non-zero on failure.
 #include "Arpeggiator.h"
 #include "Effects.h"
+#include "Presets.h"
 #include "SynthEngine.h"
 
 #include <cstdio>
@@ -15,6 +16,30 @@ void check (bool ok, const char* what)
     if (! ok)
         ++failures;
 }
+
+/** Just enough of a plugin to own the real parameter set. */
+struct ParameterHost final : public juce::AudioProcessor
+{
+    const juce::String getName() const override { return "test"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+    using AudioProcessor::processBlock;
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+
+    juce::AudioProcessorValueTreeState apvts { *this, nullptr, "AMVSynth", amv::createParameterLayout() };
+};
 
 bool near (float a, float b, float tolerance = 0.001f) { return std::abs (a - b) < tolerance; }
 
@@ -532,6 +557,39 @@ int main()
             };
             check (wheel (127) > wheel (0) * 4.0, "mod wheel to cutoff opens the filter");
         }
+    }
+
+    // Factory presets
+    {
+        juce::ScopedJuceInitialiser_GUI gui;
+        ParameterHost host;
+        const auto& presets = getFactoryPresets();
+        bool valid = true, unique = true;
+
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            for (size_t j = 0; j < i; ++j)
+                unique = unique && juce::String (presets[i].name) != presets[j].name;
+
+            for (const auto& [paramId, value] : presets[i].values)
+            {
+                auto* p = host.apvts.getParameter (paramId);
+                const bool ok = p != nullptr && host.apvts.getParameterRange (paramId).getRange().expanded (1.0e-4f).contains (value);
+                if (! ok)
+                    std::printf ("      %s: %s = %f\n", presets[i].name, paramId.toRawUTF8(), (double) value);
+                valid = valid && ok;
+            }
+        }
+        check (presets.size() >= 16 && unique, "factory presets have unique names");
+        check (valid, "every preset value names a real parameter and is in range");
+
+        // Applying a preset sets its values and resets everything else.
+        applyPreset (host.apvts, presets[1]);
+        const bool applied = near (host.apvts.getRawParameterValue (id::scale)->load(), 1.0f) && host.apvts.getRawParameterValue (id::delayOn)->load() > 0.5f;
+        applyPreset (host.apvts, presets[0]);
+        const bool reset = near (host.apvts.getRawParameterValue (id::scale)->load(), 0.0f) && host.apvts.getRawParameterValue (id::delayOn)->load() < 0.5f
+                               && near (host.apvts.getRawParameterValue (id::cutoff)->load(), 3200.0f, 1.0f);
+        check (applied && reset, "applying a preset sets its values and Init restores the defaults");
     }
 
     std::printf ("%d failure(s)\n", failures);

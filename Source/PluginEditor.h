@@ -122,6 +122,12 @@ private:
     std::array<juce::TextButton, 4> tabs;
     int currentPage = 0, buildingPage = 0;
 
+    juce::ComboBox presetBox;
+    juce::TextButton prevPreset { "<" }, nextPreset { ">" }, savePreset { "SAVE" }, loadPreset { "LOAD" };
+    std::unique_ptr<juce::FileChooser> fileChooser;
+    int shownPreset = -1;
+    void selectPreset (int index);
+
     PatternDisplay patternDisplay;
     WaveDisplay waveA, waveB;
     juce::MidiKeyboardComponent keyboard;

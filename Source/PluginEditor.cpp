@@ -269,6 +269,59 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
     tabs[0].setToggleState (true, juce::dontSendNotification);
 
+    // Preset bar in the header.
+    for (int i = 0; i < processor.getNumPrograms(); ++i)
+        presetBox.addItem (processor.getProgramName (i), i + 1);
+    presetBox.setTextWhenNothingSelected ("User preset");
+    presetBox.onChange = [this]
+    {
+        const int index = presetBox.getSelectedId() - 1;
+        if (index >= 0 && index != shownPreset)
+            selectPreset (index);
+    };
+    prevPreset.onClick = [this] { selectPreset ((juce::jmax (0, shownPreset) + processor.getNumPrograms() - 1) % processor.getNumPrograms()); };
+    nextPreset.onClick = [this] { selectPreset ((shownPreset + 1) % processor.getNumPrograms()); };
+
+    const auto presetFolder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("AMVSynth Presets");
+    savePreset.onClick = [this, presetFolder]
+    {
+        presetFolder.createDirectory();
+        fileChooser = std::make_unique<juce::FileChooser> ("Save preset", presetFolder, "*.amvpreset");
+        fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                                  [this] (const juce::FileChooser& chooser)
+                                  {
+                                      const auto file = chooser.getResult();
+                                      if (file != juce::File())
+                                          processor.savePresetFile (file.withFileExtension ("amvpreset"));
+                                  });
+    };
+    loadPreset.onClick = [this, presetFolder]
+    {
+        fileChooser = std::make_unique<juce::FileChooser> ("Load preset", presetFolder, "*.amvpreset");
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this] (const juce::FileChooser& chooser)
+                                  {
+                                      const auto file = chooser.getResult();
+                                      if (file.existsAsFile() && processor.loadPresetFile (file))
+                                      {
+                                          shownPreset = -1;
+                                          presetBox.setSelectedId (0, juce::dontSendNotification);
+                                          presetBox.setTextWhenNothingSelected (file.getFileNameWithoutExtension());
+                                      }
+                                  });
+    };
+
+    presetBox.setColour (juce::ComboBox::outlineColourId, colour::panelBorder);
+    addAndMakeVisible (presetBox);
+    for (auto* button : { &prevPreset, &nextPreset, &savePreset, &loadPreset })
+    {
+        button->setColour (juce::TextButton::buttonColourId, colour::header);
+        button->setColour (juce::TextButton::textColourOffId, colour::dimText);
+        addAndMakeVisible (*button);
+    }
+    shownPreset = processor.getCurrentProgram();
+    presetBox.setSelectedId (shownPreset + 1, juce::dontSendNotification);
+
     keyboard.setAvailableRange (36, 96);
     keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, colour::red);
     keyboard.setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, colour::red.withAlpha (0.4f));
@@ -352,6 +405,13 @@ AMVSynthAudioProcessorEditor::Section& AMVSynthAudioProcessorEditor::addSection 
     return sections.back();
 }
 
+void AMVSynthAudioProcessorEditor::selectPreset (int index)
+{
+    shownPreset = index;
+    processor.setCurrentProgram (index);
+    presetBox.setSelectedId (index + 1, juce::dontSendNotification);
+}
+
 void AMVSynthAudioProcessorEditor::showModel (int index)
 {
     index = juce::jlimit (0, (int) modelKnobs.size() - 1, index);
@@ -408,6 +468,13 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
 
 void AMVSynthAudioProcessorEditor::timerCallback()
 {
+    // The host can change the program too.
+    if (shownPreset >= 0 && processor.getCurrentProgram() != shownPreset)
+    {
+        shownPreset = processor.getCurrentProgram();
+        presetBox.setSelectedId (shownPreset + 1, juce::dontSendNotification);
+    }
+
     // The model can also change from host automation or a loaded preset.
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::model)->load()));
 
@@ -518,7 +585,7 @@ void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("AMVSYNTH", logo.removeFromLeft (140), juce::Justification::centredLeft);
     g.setColour (colour::dimText);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("v" JucePlugin_VersionString "  Balkan psy synthesizer", logo.removeFromLeft (260), juce::Justification::centredLeft);
+    g.drawText ("v" JucePlugin_VersionString, logo.removeFromLeft (50), juce::Justification::centredLeft);
 
     for (const auto& s : sections)
     {
@@ -598,13 +665,26 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
 void AMVSynthAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
-    auto tabArea = area.removeFromTop (headerHeight).removeFromRight (362).reduced (0, 12);
-    tabArea.removeFromRight (16);
+    auto headerArea = area.removeFromTop (headerHeight).reduced (0, 12);
+    headerArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
-        tabs[i].setBounds (tabArea.removeFromRight (80));
-        tabArea.removeFromRight (6);
+        tabs[i].setBounds (headerArea.removeFromRight (70));
+        headerArea.removeFromRight (6);
     }
+
+    // The preset bar fills the space between the logo and the tabs.
+    headerArea.removeFromLeft (250);
+    headerArea.removeFromRight (14);
+    loadPreset.setBounds (headerArea.removeFromRight (50));
+    headerArea.removeFromRight (4);
+    savePreset.setBounds (headerArea.removeFromRight (50));
+    headerArea.removeFromRight (8);
+    prevPreset.setBounds (headerArea.removeFromLeft (26));
+    headerArea.removeFromLeft (4);
+    nextPreset.setBounds (headerArea.removeFromRight (26));
+    headerArea.removeFromRight (4);
+    presetBox.setBounds (headerArea);
 
     keyboard.setBounds (area.removeFromBottom (keyboardHeight));
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7

@@ -5,6 +5,7 @@
 #include "Arpeggiator.h"
 #include "Effects.h"
 #include "Parameters.h"
+#include "Presets.h"
 #include "SynthEngine.h"
 
 class AMVSynthAudioProcessor final : public juce::AudioProcessor
@@ -28,14 +29,18 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 8.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    int getNumPrograms() override { return (int) amv::getFactoryPresets().size(); }
+    int getCurrentProgram() override { return currentPreset; }
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
+
+    /** Writes the current sound to a preset file, or loads one. */
+    bool savePresetFile (const juce::File&);
+    bool loadPresetFile (const juce::File&);
 
     juce::AudioProcessorValueTreeState apvts;
     juce::MidiKeyboardState keyboardState;
@@ -51,6 +56,7 @@ private:
     juce::AudioBuffer<float> stereo;
     juce::MidiBuffer arpMidi;
     juce::SmoothedValue<float> outputGain;
+    int currentPreset = 0;
 
     // The numbered modulation parameters are looked up once, their names are built at run time.
     struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; };

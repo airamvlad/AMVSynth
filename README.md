@@ -7,6 +7,7 @@ Status: early development. What works now:
 - Six models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval and gajde with a drone on the scale root
 - Two wavetable oscillators (Basic Shapes, Acid Saw, PWM, Vowels, Kaval, Zurla, Reeds, Bells) with up to 7 voice unison, plus a sub oscillator and noise, on their own page and mixed with the Balkan engine
 - Modulation on its own page: two LFOs (free or tempo-synced), four macros and a six slot matrix with LFOs, filter envelope, velocity, mod wheel and macros as sources
+- Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
 - Effects on their own page: distortion (tube, fold, crush), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
@@ -53,9 +54,11 @@ The results are in `build/AMVSynth_artefacts/Release`.
 - `Source/Effects.h`: the effect chain
 - `Source/Wavetables.h`: the wavetables, built from harmonic spectra at startup
 - `Source/Modulation.h`: LFOs and the modulation sources and destinations
+- `Source/Presets.h`: the factory presets
 - `Source/SynthEngine.h`: voices, ornaments, MIDI handling and DSP
 - `Source/PluginProcessor.*`: the plugin itself
 - `Source/PluginEditor.*`: the interface
+- `tests/PresetTests.cpp`: plays every factory preset through the plugin
 - `tests/EngineTests.cpp`: offline checks, run with `ctest --test-dir build -C Release`
 
 ## License
