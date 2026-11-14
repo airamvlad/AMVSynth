@@ -1,4 +1,5 @@
 // Offline checks for the tuning tables and the synth engine. Exits non-zero on failure.
+#include "Arpeggiator.h"
 #include "SynthEngine.h"
 
 #include <cstdio>
@@ -111,6 +112,111 @@ int main()
         orn.filterEnv = 1.0f;
         const auto c = render (orn);
         check (c.finite && c.peak > 0.05f && c.tailPeak < 1.0e-4f, "poly with every ornament and full resonance stays finite");
+    }
+
+    // Every model renders, stays in a sane range and falls silent.
+    {
+        const char* names[] { "lead", "accordion", "gusle", "frula", "kaval", "gajde" };
+        for (int m = 0; m < 6; ++m)
+        {
+            EngineParams p;
+            p.model = (Model) m;
+            if (p.model == Model::gajde)
+                p.macro = { 0.6f, 0.0f, 0.8f, 0.5f };
+            const auto r = render (p);
+            std::printf ("      %-10s peak %.3f\n", names[m], (double) r.peak);
+            check (r.finite && r.peak > 0.05f && r.peak < 3.0f && r.tailPeak < 1.0e-4f, names[m]);
+        }
+    }
+
+    // Arpeggiator: 7/8 (3+2+2) in sixteenths at 120 bpm, host playing from bar start.
+    {
+        Arpeggiator arp;
+        arp.prepare (48000.0);
+        ArpParams ap;
+        ap.on = true;
+        ap.meter = 2;
+        ap.rate = 1;
+        ap.gate = 0.5f;
+        ap.accent = 1.0f;
+
+        std::vector<int> onTimes, onNotes;
+        std::vector<float> onVelocities;
+        int ons = 0, offs = 0;
+        const int block = 512, stepSamples = 6000;
+
+        for (int b = 0; b < 400; ++b)
+        {
+            juce::MidiBuffer in, out;
+            if (b == 0)
+            {
+                in.addEvent (juce::MidiMessage::noteOn (1, 62, 1.0f), 0);
+                in.addEvent (juce::MidiMessage::noteOn (1, 65, 1.0f), 0);
+                in.addEvent (juce::MidiMessage::noteOn (1, 69, 1.0f), 0);
+            }
+            if (b == 300)
+                for (int n : { 62, 65, 69 })
+                    in.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+
+            TransportInfo t;
+            t.playing = true;
+            t.bpm = 120.0;
+            t.ppq = (double) (b * block) / 24000.0;
+            arp.process (in, out, block, ap, t);
+
+            for (const auto meta : out)
+            {
+                const auto m = meta.getMessage();
+                if (m.isNoteOn())
+                {
+                    ++ons;
+                    onTimes.push_back (b * block + meta.samplePosition);
+                    onNotes.push_back (m.getNoteNumber());
+                    onVelocities.push_back (m.getFloatVelocity());
+                }
+                else if (m.isNoteOff())
+                    ++offs;
+            }
+        }
+
+        bool timing = onTimes.size() >= 14;
+        bool accents = timing, order = timing;
+        for (size_t i = 0; timing && i < 14; ++i)
+        {
+            timing = timing && std::abs (onTimes[i] - (int) i * stepSamples) <= 1;
+            const bool accent = (i % 7 == 0) || (i % 7 == 3) || (i % 7 == 5);
+            accents = accents && (accent ? onVelocities[i] > 0.9f : onVelocities[i] < 0.5f);
+            const int expected[] { 62, 65, 69 };
+            order = order && onNotes[i] == expected[i % 3];
+        }
+
+        check (timing, "arp steps land on the sixteenth grid");
+        check (accents, "arp accents follow 3+2+2");
+        check (order, "arp plays held notes upwards");
+        check (ons == 26 && offs == ons, "arp stops after release and every note gets a note off");
+
+        // Bar-locked mode restarts the pattern on each 4/4 bar: step 16 is an accent again.
+        Arpeggiator locked;
+        locked.prepare (48000.0);
+        ap.polymeter = false;
+        std::vector<float> velocities;
+        for (int b = 0; b < 240; ++b)
+        {
+            juce::MidiBuffer in, out;
+            if (b == 0)
+                in.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            TransportInfo t;
+            t.playing = true;
+            t.bpm = 120.0;
+            t.ppq = (double) (b * block) / 24000.0;
+            locked.process (in, out, block, ap, t);
+            for (const auto meta : out)
+                if (meta.getMessage().isNoteOn())
+                    velocities.push_back (meta.getMessage().getFloatVelocity());
+        }
+
+        check (velocities.size() > 17 && velocities[14] > 0.9f && velocities[15] < 0.5f && velocities[16] > 0.9f && velocities[17] < 0.5f,
+               "arp without polymeter restarts on the bar");
     }
 
     std::printf ("%d failure(s)\n", failures);

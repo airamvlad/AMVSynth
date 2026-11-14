@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "Arpeggiator.h"
 #include "Parameters.h"
 #include "SynthEngine.h"
 
@@ -43,6 +44,8 @@ private:
     float value (const char* paramId) const;
 
     amv::SynthEngine engine;
+    amv::Arpeggiator arp;
+    juce::MidiBuffer arpMidi;
     juce::SmoothedValue<float> outputGain;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessor)

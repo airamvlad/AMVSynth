@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "Arpeggiator.h"
 #include "Tuning.h"
 
 namespace amv
@@ -15,6 +16,30 @@ inline constexpr auto accBellows = "accBellows";
 inline constexpr auto accMusette = "accMusette";
 inline constexpr auto accRegister = "accRegister";
 inline constexpr auto accClick = "accClick";
+inline constexpr auto gusBow = "gusBow";
+inline constexpr auto gusPosition = "gusPosition";
+inline constexpr auto gusRasp = "gusRasp";
+inline constexpr auto gusNasal = "gusNasal";
+inline constexpr auto fruBreath = "fruBreath";
+inline constexpr auto fruOverblow = "fruOverblow";
+inline constexpr auto fruNoise = "fruNoise";
+inline constexpr auto fruChiff = "fruChiff";
+inline constexpr auto kavBreath = "kavBreath";
+inline constexpr auto kavOverblow = "kavOverblow";
+inline constexpr auto kavNoise = "kavNoise";
+inline constexpr auto kavThroat = "kavThroat";
+inline constexpr auto gajDrone = "gajDrone";
+inline constexpr auto gajDroneTune = "gajDroneTune";
+inline constexpr auto gajBag = "gajBag";
+inline constexpr auto gajEdge = "gajEdge";
+inline constexpr auto arpOn = "arpOn";
+inline constexpr auto arpMeter = "arpMeter";
+inline constexpr auto arpRate = "arpRate";
+inline constexpr auto arpMode = "arpMode";
+inline constexpr auto arpOctaves = "arpOctaves";
+inline constexpr auto arpGate = "arpGate";
+inline constexpr auto arpAccent = "arpAccent";
+inline constexpr auto arpPolymeter = "arpPolymeter";
 inline constexpr auto scaleRoot = "scaleRoot";
 inline constexpr auto scale = "scale";
 inline constexpr auto snap = "snap";
@@ -76,7 +101,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { paramId, 1 }, name, choices, def));
     };
 
-    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion" }, 0);
+    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde" }, 0);
 
     // Juzni Vetar lead
     add (id::tone, "Lead Tone", Range (0.0f, 1.0f), 0.55f);
@@ -89,6 +114,48 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::accMusette, "Accordion Musette", Range (0.0f, 40.0f), 12.0f, "ct");
     add (id::accRegister, "Accordion Register", Range (0.0f, 1.0f), 0.4f);
     add (id::accClick, "Accordion Click", Range (0.0f, 1.0f), 0.3f);
+
+    // Gusle
+    add (id::gusBow, "Gusle Bow", Range (0.0f, 1.0f), 0.7f);
+    add (id::gusPosition, "Gusle Position", Range (0.0f, 1.0f), 0.4f);
+    add (id::gusRasp, "Gusle Rasp", Range (0.0f, 1.0f), 0.35f);
+    add (id::gusNasal, "Gusle Nasal", Range (0.0f, 1.0f), 0.6f);
+
+    // Frula
+    add (id::fruBreath, "Frula Breath", Range (0.0f, 1.0f), 0.7f);
+    add (id::fruOverblow, "Frula Overblow", Range (0.0f, 1.0f), 0.15f);
+    add (id::fruNoise, "Frula Noise", Range (0.0f, 1.0f), 0.3f);
+    add (id::fruChiff, "Frula Chiff", Range (0.0f, 1.0f), 0.4f);
+
+    // Kaval
+    add (id::kavBreath, "Kaval Breath", Range (0.0f, 1.0f), 0.7f);
+    add (id::kavOverblow, "Kaval Overblow", Range (0.0f, 1.0f), 0.1f);
+    add (id::kavNoise, "Kaval Noise", Range (0.0f, 1.0f), 0.5f);
+    add (id::kavThroat, "Kaval Throat", Range (0.0f, 1.0f), 0.3f);
+
+    // Gajde
+    add (id::gajDrone, "Gajde Drone", Range (0.0f, 1.0f), 0.6f);
+    add (id::gajDroneTune, "Gajde Drone Tune", Range (-12.0f, 12.0f, 1.0f), 0.0f, "st");
+    add (id::gajBag, "Gajde Bag", Range (0.0f, 1.0f), 0.8f);
+    add (id::gajEdge, "Gajde Edge", Range (0.0f, 1.0f), 0.5f);
+
+    // Arpeggiator
+    juce::StringArray meterNames, rateNames, modeNames;
+    for (const auto& m : getMeters())
+        meterNames.add (m.name);
+    for (const auto* r : getArpRates())
+        rateNames.add (r);
+    for (const auto* m : getArpModes())
+        modeNames.add (m);
+
+    addBool (id::arpOn, "Arp On", false);
+    addChoice (id::arpMeter, "Arp Meter", meterNames, 2);
+    addChoice (id::arpRate, "Arp Rate", rateNames, 1);
+    addChoice (id::arpMode, "Arp Mode", modeNames, 0);
+    add (id::arpOctaves, "Arp Octaves", Range (1.0f, 3.0f, 1.0f), 1.0f);
+    add (id::arpGate, "Arp Gate", Range (10.0f, 150.0f), 60.0f, "%");
+    add (id::arpAccent, "Arp Accent", Range (0.0f, 100.0f), 60.0f, "%");
+    addBool (id::arpPolymeter, "Arp Polymeter", true);
 
     // Scale
     juce::StringArray roots, scaleNames;

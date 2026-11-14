@@ -10,6 +10,8 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
 void AMVSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock);
+    arp.prepare (sampleRate);
+    arpMidi.ensureSize (4096);
     engine.setParams (readParams());
     outputGain.reset (sampleRate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
@@ -46,6 +48,17 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.ornSpeedSec = value (id::ornSpeed) * 0.001f;
     p.ornAmount = value (id::ornAmount);
     p.ornChance = value (id::ornChance) * 0.01f;
+
+    switch (p.model)
+    {
+        case Model::gusle: p.macro = { value (id::gusBow), value (id::gusPosition), value (id::gusRasp), value (id::gusNasal) }; break;
+        case Model::frula: p.macro = { value (id::fruBreath), value (id::fruOverblow), value (id::fruNoise), value (id::fruChiff) }; break;
+        case Model::kaval: p.macro = { value (id::kavBreath), value (id::kavOverblow), value (id::kavNoise), value (id::kavThroat) }; break;
+        case Model::gajde: p.macro = { value (id::gajDrone), value (id::gajDroneTune), value (id::gajBag), value (id::gajEdge) }; break;
+        case Model::juzniVetar:
+        case Model::accordion: break;
+    }
+
     p.tone = value (id::tone);
     p.pulseWidth = value (id::pulseWidth);
     p.detuneCents = value (id::detune);
@@ -70,8 +83,35 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
 
+    amv::ArpParams ap;
+    ap.on = value (amv::id::arpOn) > 0.5f;
+    ap.meter = juce::roundToInt (value (amv::id::arpMeter));
+    ap.rate = juce::roundToInt (value (amv::id::arpRate));
+    ap.mode = juce::roundToInt (value (amv::id::arpMode));
+    ap.octaves = juce::roundToInt (value (amv::id::arpOctaves));
+    ap.gate = value (amv::id::arpGate) * 0.01f;
+    ap.accent = value (amv::id::arpAccent) * 0.01f;
+    ap.polymeter = value (amv::id::arpPolymeter) > 0.5f;
+
+    amv::TransportInfo transport;
+    if (auto* head = getPlayHead())
+        if (const auto position = head->getPosition())
+        {
+            transport.playing = position->getIsPlaying();
+            if (const auto bpm = position->getBpm())
+                transport.bpm = *bpm;
+            if (const auto ppq = position->getPpqPosition())
+                transport.ppq = *ppq;
+            else
+                transport.playing = false;
+            if (const auto sig = position->getTimeSignature())
+                transport.barBeats = 4.0 * sig->numerator / juce::jmax (1, sig->denominator);
+        }
+
+    arp.process (midi, arpMidi, buffer.getNumSamples(), ap, transport);
+
     engine.setParams (readParams());
-    engine.process (buffer, midi);
+    engine.process (buffer, arpMidi);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
     outputGain.applyGain (buffer, buffer.getNumSamples());

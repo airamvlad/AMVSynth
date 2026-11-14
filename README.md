@@ -4,7 +4,8 @@ A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytra
 
 Status: early development. What works now:
 
-- Two models in the Balkan engine: the Južni Vetar style keyboard lead and an accordion with bellows, musette, register and key click controls
+- Six models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval and gajde with a drone on the scale root
+- Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Ornaments played automatically: grace note, mordent, trill and fall
 - Mono legato or 16 voices, glide, delayed vibrato, pitch bend, low-pass filter and two envelopes
@@ -45,6 +46,7 @@ The results are in `build/AMVSynth_artefacts/Release`.
 
 - `Source/Parameters.h`: all plugin parameters
 - `Source/Tuning.h`: scales and microtonal key mapping
+- `Source/Arpeggiator.h`: the odd-meter arpeggiator
 - `Source/SynthEngine.h`: voices, ornaments, MIDI handling and DSP
 - `Source/PluginProcessor.*`: the plugin itself
 - `Source/PluginEditor.*`: the interface

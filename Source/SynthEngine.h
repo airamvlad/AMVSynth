@@ -15,7 +15,11 @@ namespace amv
 enum class Model
 {
     juzniVetar = 0,
-    accordion
+    accordion,
+    gusle,
+    frula,
+    kaval,
+    gajde
 };
 
 enum class Ornament
@@ -42,6 +46,13 @@ struct EngineParams
     float musetteCents = 12.0f;
     float registerPos = 0.4f;
     float click = 0.3f;
+
+    // The four controls of the selected model, for the models added after the accordion:
+    //   gusle: bow, position, rasp, nasal
+    //   frula: breath, overblow, noise, chiff
+    //   kaval: breath, overblow, noise, throat
+    //   gajde: drone level, drone tuning in semitones, bag pressure, edge
+    std::array<float, 4> macro { 0.7f, 0.4f, 0.3f, 0.5f };
 
     // Performance
     float vibDepthCents = 28.0f;
@@ -127,6 +138,10 @@ public:
             reedLp = 0.0f;
             clickLp = 0.0f;
             clickHp = 0.0f;
+            slowNoise = 0.0f;
+            fastNoise = 0.0f;
+            for (auto& b : bands)
+                b.reset();
         }
 
         vibTime = 0.0f;
@@ -202,7 +217,17 @@ public:
                 releaseTime += dt;
             }
 
-            float s = p.model == Model::accordion ? renderAccordion (pitch, sr, mc) : renderLead (pitch, sr, p, mc);
+            float s = 0.0f;
+            switch (p.model)
+            {
+                case Model::juzniVetar: s = renderLead (pitch, sr, p, mc); break;
+                case Model::accordion:  s = renderAccordion (pitch, sr, mc); break;
+                case Model::gusle:      s = renderGusle (pitch, sr, p, mc); break;
+                case Model::frula:      s = renderPipe (pitch, sr, p, mc, false); break;
+                case Model::kaval:      s = renderPipe (pitch, sr, p, mc, true); break;
+                case Model::gajde:      s = renderGajde (pitch, sr, p, mc); break;
+            }
+
             s = filter.processSample (0, s);
             out[i] += s * ampEnv.getNextSample() * (0.35f + 0.65f * velocity);
         }
@@ -212,8 +237,38 @@ public:
     }
 
 private:
+    /** A band-pass resonator (state variable filter) with unity gain at its centre. */
+    struct Band
+    {
+        void set (float freq, float q, float sr) noexcept
+        {
+            const float g = std::tan (juce::MathConstants<float>::pi * juce::jlimit (20.0f, 0.45f * sr, freq) / sr);
+            k = 1.0f / q;
+            a1 = 1.0f / (1.0f + g * (g + k));
+            a2 = g * a1;
+            a3 = g * a2;
+        }
+
+        float process (float x) noexcept
+        {
+            const float v3 = x - ic2;
+            const float v1 = a1 * ic1 + a2 * v3;
+            const float v2 = ic2 + a2 * ic1 + a3 * v3;
+            ic1 = 2.0f * v1 - ic1;
+            ic2 = 2.0f * v2 - ic2;
+            return v1 * k;
+        }
+
+        void reset() noexcept { ic1 = ic2 = 0.0f; }
+
+        float k = 1.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, ic1 = 0.0f, ic2 = 0.0f;
+    };
+
     struct ModelCoeffs
     {
+        // shared by the newer models
+        float level = 1.0f, brightCoeff = 1.0f, slowCoeff = 0.0f, fastCoeff = 0.0f;
+
         // lead
         float sawGain = 1.0f, pulseGain = 0.0f, detune = 0.0f;
         // accordion
@@ -251,14 +306,60 @@ private:
         return 0.0f;
     }
 
-    void prepareModel (ModelCoeffs& mc, const EngineParams& p, float sr) const
+    void prepareModel (ModelCoeffs& mc, const EngineParams& p, float sr)
     {
         mc.sawGain = std::cos (p.tone * juce::MathConstants<float>::halfPi);
         mc.pulseGain = std::sin (p.tone * juce::MathConstants<float>::halfPi);
         mc.detune = p.detuneCents * 0.01f;
 
-        if (p.model != Model::accordion)
-            return;
+        const auto onePole = [sr] (float hz) { return 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (hz, 0.45f * sr) / sr); };
+        const float hz = midiToHz (currentPitch);
+
+        switch (p.model)
+        {
+            case Model::gusle:
+            {
+                const float bow = 0.2f + 0.8f * p.macro[0];
+                mc.level = bow * 1.6f;
+                mc.brightCoeff = onePole (1100.0f * std::exp2 (bow * 3.0f));
+                mc.slowCoeff = onePole (18.0f);
+                mc.fastCoeff = onePole (2200.0f);
+                bands[0].set (430.0f, 4.0f, sr);
+                bands[1].set (1150.0f, 6.0f, sr);
+                bands[2].set (2500.0f, 5.0f, sr);
+                return;
+            }
+
+            case Model::frula:
+            case Model::kaval:
+            {
+                const bool isKaval = p.model == Model::kaval;
+                const float breath = 0.25f + 0.75f * p.macro[0];
+                mc.level = breath * 1.8f;
+                mc.slowCoeff = onePole (9.0f);
+                mc.clickDecay = std::exp (-1.0f / (0.03f * sr));
+                bands[0].set (hz * (isKaval ? 1.5f : 2.0f), isKaval ? 1.6f : 3.0f, sr); // breath noise around the tone
+                bands[1].set (hz * 4.0f, 2.0f, sr);                                       // chiff at the attack
+                return;
+            }
+
+            case Model::gajde:
+            {
+                const float bag = 0.3f + 0.7f * p.macro[2];
+                mc.level = bag * 1.1f;
+                mc.slowCoeff = onePole (2.5f);
+                mc.brightCoeff = onePole (1500.0f * std::exp2 (p.macro[3] * 2.6f));
+                bands[0].set (1400.0f, 3.0f, sr);
+                bands[1].set (2900.0f, 4.0f, sr);
+                return;
+            }
+
+            case Model::juzniVetar:
+                return;
+
+            case Model::accordion:
+                break;
+        }
 
         // The register knob sweeps through the classic reed combinations:
         // single reed, two detuned reeds, with the low octave, full musette, then the high reed on top.
@@ -335,6 +436,86 @@ private:
         return reedLp * mc.reedLevel + clickOut;
     }
 
+    float noise() noexcept { return random.nextFloat() * 2.0f - 1.0f; }
+
+    /** Gusle: one bowed horsehair string over a skin-covered body. A bowed string moves in a
+        sawtooth-like shape; the bow adds irregular scratch, the body adds nasal resonances. */
+    float renderGusle (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float position = p.macro[1], rasp = p.macro[2], nasal = p.macro[3];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+
+        const float inc = midiToHz (pitch + rasp * 6.0f * slowNoise) / sr;
+        float s = saw (phases[0], inc) * (1.0f - 0.5f * position)
+                  + pulse (phases[0], inc, 0.08f + 0.25f * position) * position * 0.7f;
+        advance (phases[0], inc);
+
+        s *= 1.0f + rasp * 2.5f * fastNoise;
+        s += rasp * 0.25f * (noise() - fastNoise);
+
+        reedLp += (s - reedLp) * mc.brightCoeff;
+        const float body = bands[0].process (reedLp) * 1.6f + bands[1].process (reedLp) * 2.2f + bands[2].process (reedLp) * 1.2f;
+        return (reedLp * (1.0f - 0.75f * nasal) + body * nasal) * mc.level;
+    }
+
+    /** Frula and kaval: an air jet exciting a pipe. A nearly pure tone whose second harmonic takes
+        over when overblown, with breath noise around it. The kaval adds its throaty low register. */
+    float renderPipe (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc, bool isKaval) noexcept
+    {
+        const float breath = p.macro[0], overblow = p.macro[1], noiseAmount = p.macro[2], fourth = p.macro[3];
+        const float twoPi = juce::MathConstants<float>::twoPi;
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        const float inc = midiToHz (pitch + slowNoise * 8.0f * noiseAmount) / sr;
+        const float ph = phases[0] * twoPi;
+
+        const float h2 = (isKaval ? 0.15f : 0.25f) + overblow * 0.9f;
+        const float h3 = isKaval ? 0.3f : 0.12f;
+        float tone = std::sin (ph) * (1.0f - 0.6f * overblow) + h2 * std::sin (2.0f * ph) + h3 * std::sin (3.0f * ph)
+                     + breath * 0.15f * std::sin (4.0f * ph);
+        advance (phases[0], inc);
+
+        const float white = noise();
+        float air = bands[0].process (white) * noiseAmount * (isKaval ? 1.4f : 0.9f);
+
+        if (isKaval)
+        {
+            // Kaba register: a tone an octave below that also roughens the main tone.
+            const float low = std::sin (phases[1] * twoPi);
+            tone = tone * (1.0f - 0.35f * fourth + 0.35f * fourth * low) + fourth * 0.6f * low;
+            advance (phases[1], inc * 0.5f);
+        }
+        else if (clickEnv > 0.0005f)
+        {
+            // Chiff: a puff of air before the tone settles.
+            air += bands[1].process (white) * clickEnv * fourth * 2.5f;
+            clickEnv *= mc.clickDecay;
+        }
+
+        tone *= 1.0f + slowNoise * 12.0f * noiseAmount;
+        return (tone * 0.6f + air) * mc.level;
+    }
+
+    /** Gajde chanter: a single reed in a narrow pipe, bright and nasal, fed from a bag so the
+        pressure and pitch wander slightly. The drone is added by the engine. */
+    float renderGajde (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float bag = p.macro[2], edge = p.macro[3];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        const float sag = (1.0f - bag) * (0.25f + 25.0f * slowNoise);
+        const float inc = midiToHz (pitch - sag) / sr;
+
+        const float s = pulse (phases[0], inc, 0.32f - 0.2f * edge) * 0.7f + saw (phases[0], inc) * 0.3f;
+        advance (phases[0], inc);
+
+        reedLp += (s - reedLp) * mc.brightCoeff;
+        const float nasal = bands[0].process (reedLp) * 1.8f + bands[1].process (reedLp) * (0.6f + edge);
+        return (reedLp * 0.45f + nasal) * mc.level;
+    }
+
     static float midiToHz (float pitch) noexcept
     {
         return 440.0f * std::exp2 ((pitch - 69.0f) / 12.0f);
@@ -396,6 +577,8 @@ private:
     float stepAbove = 1.0f, ornTime = 0.0f, releaseTime = 0.0f;
 
     float reedLp = 0.0f, clickEnv = 0.0f, clickLp = 0.0f, clickHp = 0.0f;
+    float slowNoise = 0.0f, fastNoise = 0.0f;
+    std::array<Band, 3> bands;
 };
 
 /** Voice allocation, tuning, ornaments, MIDI handling and rendering. */
@@ -411,6 +594,9 @@ public:
             v.prepare (sampleRate);
 
         mix.assign ((size_t) juce::jmax (maxBlockSize, chunkSize), 0.0f);
+        engineSampleRate = (float) sampleRate;
+        droneLevel = 0.0f;
+        droneLp = 0.0f;
         bendSmooth = 0.0f;
         bendTarget = 0.0f;
         bendCoeff = 1.0f - std::exp (-1.0f / (0.004f * (float) sampleRate / (float) chunkSize));
@@ -471,10 +657,47 @@ private:
             const int n = juce::jmin (chunkSize, end - start);
             bendSmooth += (bendTarget - bendSmooth) * bendCoeff;
 
+            bool anyHeld = false;
             for (auto& v : voices)
+            {
                 v.render (mix.data() + start, n, params, bendSmooth);
+                anyHeld = anyHeld || v.isHeld();
+            }
+
+            if (params.model == Model::gajde)
+                renderDrone (mix.data() + start, n, anyHeld);
 
             start += n;
+        }
+    }
+
+    /** The gajde drone: one steady pipe on the scale root, two octaves below middle C, sounding
+        for as long as any note is held. */
+    void renderDrone (float* out, int numSamples, bool anyHeld)
+    {
+        const float sr = engineSampleRate;
+        const float target = anyHeld ? params.macro[0] * 0.3f : 0.0f;
+        if (target <= 0.0f && droneLevel < 1.0e-5f)
+        {
+            droneLevel = 0.0f;
+            return;
+        }
+
+        const float levelCoeff = 1.0f - std::exp (-1.0f / ((anyHeld ? 0.08f : 0.35f) * sr));
+        const float pitch = 36.0f + (float) params.scaleRoot + params.macro[1];
+        const float inc = 440.0f * std::exp2 ((pitch - 69.0f) / 12.0f) / sr;
+        const float lpCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 1400.0f / sr);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            droneLevel += (target - droneLevel) * levelCoeff;
+            const float raw = (dronePhase < 0.25f ? 1.0f : -1.0f) * 0.6f + (2.0f * dronePhase - 1.0f) * 0.4f;
+            droneLp += (raw - droneLp) * lpCoeff;
+            out[i] += droneLp * droneLevel;
+
+            dronePhase += inc;
+            if (dronePhase >= 1.0f)
+                dronePhase -= 1.0f;
         }
     }
 
@@ -584,5 +807,6 @@ private:
     juce::Random random;
     juce::uint64 counter = 0;
     float bendSmooth = 0.0f, bendTarget = 0.0f, bendCoeff = 1.0f;
+    float engineSampleRate = 44100.0f, droneLevel = 0.0f, droneLp = 0.0f, dronePhase = 0.0f;
 };
 } // namespace amv
