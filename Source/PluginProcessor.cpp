@@ -30,6 +30,22 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
 {
     using namespace amv;
     EngineParams p;
+    p.model = (Model) juce::roundToInt (value (id::model));
+    p.sub = value (id::sub);
+    p.bellows = value (id::accBellows);
+    p.musetteCents = value (id::accMusette);
+    p.registerPos = value (id::accRegister);
+    p.click = value (id::accClick);
+    p.scaleRoot = juce::roundToInt (value (id::scaleRoot));
+    p.scale = juce::roundToInt (value (id::scale));
+    p.snap = value (id::snap) > 0.5f;
+    p.grace = value (id::ornGrace) > 0.5f;
+    p.mordent = value (id::ornMordent) > 0.5f;
+    p.trill = value (id::ornTrill) > 0.5f;
+    p.fall = value (id::ornFall) > 0.5f;
+    p.ornSpeedSec = value (id::ornSpeed) * 0.001f;
+    p.ornAmount = value (id::ornAmount);
+    p.ornChance = value (id::ornChance) * 0.01f;
     p.tone = value (id::tone);
     p.pulseWidth = value (id::pulseWidth);
     p.detuneCents = value (id::detune);

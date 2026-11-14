@@ -26,10 +26,12 @@ public:
     LookAndFeel();
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height, float sliderPos,
                            float startAngle, float endAngle, juce::Slider&) override;
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool highlighted, bool down) override;
 };
 } // namespace amv
 
-class AMVSynthAudioProcessorEditor final : public juce::AudioProcessorEditor
+class AMVSynthAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                           private juce::Timer
 {
 public:
     explicit AMVSynthAudioProcessorEditor (AMVSynthAudioProcessor&);
@@ -39,13 +41,29 @@ public:
     void resized() override;
 
 private:
+    using APVTS = juce::AudioProcessorValueTreeState;
+
     struct Knob
     {
         juce::Slider slider;
         juce::Label label;
-        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+        std::unique_ptr<APVTS::SliderAttachment> attachment;
     };
 
+    struct Toggle
+    {
+        juce::ToggleButton button;
+        std::unique_ptr<APVTS::ButtonAttachment> attachment;
+    };
+
+    struct Choice
+    {
+        juce::ComboBox box;
+        std::unique_ptr<APVTS::ComboBoxAttachment> attachment;
+    };
+
+    /** A titled panel. Its controls are laid out left to right: an optional column of
+        choices and toggles, then the knobs. */
     struct Section
     {
         juce::String title;
@@ -53,20 +71,33 @@ private:
         int row = 0;
         float weight = 1.0f;
         std::vector<Knob*> knobs;
+        std::vector<juce::Component*> column;
+        int columnsInColumn = 1;
         juce::Rectangle<int> bounds;
     };
 
-    Section& addSection (const juce::String& title, bool balkan, int row,
-                         std::initializer_list<std::pair<const char*, const char*>> params);
+    using ParamList = std::initializer_list<std::pair<const char*, const char*>>;
+
+    std::vector<Knob*> makeKnobs (bool balkan, ParamList params);
+    Toggle* makeToggle (const char* paramId, const juce::String& text, bool balkan);
+    Choice* makeChoice (const char* paramId, bool balkan);
+    Section& addSection (const juce::String& title, bool balkan, int row, float weight);
+    void layoutSection (Section&);
+    void showModel (int index);
+    void timerCallback() override;
 
     AMVSynthAudioProcessor& processor;
     amv::LookAndFeel lookAndFeel;
 
     std::vector<std::unique_ptr<Knob>> knobs;
+    std::vector<std::unique_ptr<Toggle>> toggles;
+    std::vector<std::unique_ptr<Choice>> choices;
     std::vector<Section> sections;
 
-    juce::ToggleButton monoButton { "MONO LEGATO" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoAttachment;
+    std::vector<std::vector<Knob*>> modelKnobs;
+    size_t engineSection = 0;
+    int shownModel = -1;
+
     juce::MidiKeyboardComponent keyboard;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessorEditor)
