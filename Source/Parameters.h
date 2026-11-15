@@ -47,6 +47,22 @@ inline constexpr auto tapThump = "tapThump";
 inline constexpr auto tapSnap = "tapSnap";
 inline constexpr auto tapDecay = "tapDecay";
 inline constexpr auto tapRing = "tapRing";
+inline constexpr auto dvoBreath = "dvoBreath";
+inline constexpr auto dvoSecond = "dvoSecond";
+inline constexpr auto dvoInterval = "dvoInterval";
+inline constexpr auto dvoBeat = "dvoBeat";
+inline constexpr auto claBreath = "claBreath";
+inline constexpr auto claReed = "claReed";
+inline constexpr auto claGrowl = "claGrowl";
+inline constexpr auto claBody = "claBody";
+inline constexpr auto truBlow = "truBlow";
+inline constexpr auto truBlare = "truBlare";
+inline constexpr auto truRasp = "truRasp";
+inline constexpr auto truMute = "truMute";
+inline constexpr auto vioBow = "vioBow";
+inline constexpr auto vioPosition = "vioPosition";
+inline constexpr auto vioScratch = "vioScratch";
+inline constexpr auto vioBody = "vioBody";
 inline constexpr auto arpOn = "arpOn";
 inline constexpr auto arpMeter = "arpMeter";
 inline constexpr auto arpRate = "arpRate";
@@ -166,7 +182,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { paramId, 1 }, name, choices, def));
     };
 
-    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde", "Zurla", "Tambura", "Tapan" }, 0);
+    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde", "Zurla", "Tambura", "Tapan", "Dvojnice", "Clarinet", "Truba", "Violin" }, 0);
 
     // Juzni Vetar lead
     add (id::tone, "Lead Tone", Range (0.0f, 1.0f), 0.55f);
@@ -221,6 +237,30 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::tapSnap, "Tapan Snap", Range (0.0f, 1.0f), 0.5f);
     add (id::tapDecay, "Tapan Decay", Range (0.0f, 1.0f), 0.45f);
     add (id::tapRing, "Tapan Ring", Range (0.0f, 1.0f), 0.3f);
+
+    // Dvojnice
+    add (id::dvoBreath, "Dvojnice Breath", Range (0.0f, 1.0f), 0.7f);
+    add (id::dvoSecond, "Dvojnice Second Pipe", Range (0.0f, 1.0f), 0.7f);
+    add (id::dvoInterval, "Dvojnice Interval", Range (-12.0f, 12.0f, 1.0f), -3.0f, "st");
+    add (id::dvoBeat, "Dvojnice Beating", Range (0.0f, 1.0f), 0.3f);
+
+    // Clarinet
+    add (id::claBreath, "Clarinet Breath", Range (0.0f, 1.0f), 0.65f);
+    add (id::claReed, "Clarinet Reed", Range (0.0f, 1.0f), 0.3f);
+    add (id::claGrowl, "Clarinet Growl", Range (0.0f, 1.0f), 0.1f);
+    add (id::claBody, "Clarinet Body", Range (0.0f, 1.0f), 0.5f);
+
+    // Truba
+    add (id::truBlow, "Truba Blow", Range (0.0f, 1.0f), 0.65f);
+    add (id::truBlare, "Truba Blare", Range (0.0f, 1.0f), 0.5f);
+    add (id::truRasp, "Truba Rasp", Range (0.0f, 1.0f), 0.15f);
+    add (id::truMute, "Truba Mute", Range (0.0f, 1.0f), 0.0f);
+
+    // Violin
+    add (id::vioBow, "Violin Bow", Range (0.0f, 1.0f), 0.7f);
+    add (id::vioPosition, "Violin Position", Range (0.0f, 1.0f), 0.3f);
+    add (id::vioScratch, "Violin Scratch", Range (0.0f, 1.0f), 0.2f);
+    add (id::vioBody, "Violin Body", Range (0.0f, 1.0f), 0.6f);
 
     // Wavetable oscillators, sub, noise and the mixer
     juce::StringArray tableNames;
