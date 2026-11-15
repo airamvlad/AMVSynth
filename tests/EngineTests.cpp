@@ -775,6 +775,149 @@ int main()
         }
     }
 
+    // Filter types, reference pitch and MPE, measured on a plain sine from oscillator A.
+    {
+        struct Measured
+        {
+            float hz = 0.0f, peak = 0.0f;
+            bool finite = true;
+        };
+
+        // Plays A3 and returns the frequency (from the zero crossings) and level of the held note.
+        const auto play = [] (EngineParams p, int channel, const std::vector<juce::MidiMessage>& before)
+        {
+            p.engineLevel = 0.0f;
+            p.oscA.table = 0;
+            p.oscA.position = 0.0f;
+            p.oscA.unison = 1;
+            p.oscA.level = 1.0f;
+            p.vibDepthCents = 0.0f;
+            p.filterEnv = 0.0f;
+            p.amp = { 0.002f, 0.1f, 1.0f, 0.05f };
+
+            SynthEngine engine;
+            engine.prepare (48000.0, 512);
+            engine.setParams (p);
+
+            std::vector<float> out;
+            for (int block = 0; block < 100; ++block)
+            {
+                juce::MidiBuffer midi;
+                if (block == 0)
+                {
+                    for (const auto& m : before)
+                        midi.addEvent (m, 0);
+                    midi.addEvent (juce::MidiMessage::noteOn (channel, 57, 0.9f), 1);
+                }
+
+                juce::AudioBuffer<float> buffer (2, 512);
+                buffer.clear();
+                engine.process (buffer, midi);
+                out.insert (out.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + 512);
+            }
+
+            Measured result;
+            double first = -1.0, last = -1.0;
+            int crossings = 0;
+            for (size_t i = 9600; i + 1 < out.size(); ++i)
+            {
+                result.finite = result.finite && std::isfinite (out[i]);
+                result.peak = juce::jmax (result.peak, std::abs (out[i]));
+                if (out[i] < 0.0f && out[i + 1] >= 0.0f)
+                {
+                    last = (double) i + (double) out[i] / ((double) out[i] - (double) out[i + 1]);
+                    if (first < 0.0)
+                        first = last;
+                    else
+                        ++crossings;
+                }
+            }
+
+            if (crossings > 0)
+                result.hz = (float) (48000.0 * crossings / (last - first));
+            return result;
+        };
+
+        EngineParams open;
+        open.cutoffHz = 18000.0f;
+        open.resonance = 0.0f;
+        const auto reference = play (open, 1, {});
+        check (near (reference.hz, 220.0f, 0.05f), "A3 plays at 220 Hz with the reference at 440");
+
+        // Reference pitch
+        {
+            auto p = open;
+            p.tuneHz = 432.0f;
+            const auto low = play (p, 1, {});
+            std::printf ("      A3 with A4 = 432: %.3f Hz\n", (double) low.hz);
+            check (near (low.hz, 216.0f, 0.05f), "A4 = 432 Hz lowers every note by the same ratio");
+        }
+
+        // MPE: a bend on the note's own channel uses the MPE range, other channels are left alone.
+        {
+            const int bend = 8192 + 171; // about one semitone at a range of 48
+            const float semitones = 171.0f / 8192.0f * 48.0f;
+            const float expected = 220.0f * std::exp2 (semitones / 12.0f);
+
+            auto p = open;
+            p.mpe = true;
+            const auto own = play (p, 2, { juce::MidiMessage::pitchWheel (2, bend) });
+            const auto other = play (p, 2, { juce::MidiMessage::pitchWheel (3, bend) });
+            const auto master = play (p, 2, { juce::MidiMessage::pitchWheel (1, 16383) });
+            std::printf ("      MPE bend on the note's channel: %.3f Hz, expected %.3f Hz\n", (double) own.hz, (double) expected);
+            check (near (own.hz, expected, 0.05f), "MPE bends a note from its own channel over 48 semitones");
+            check (near (other.hz, 220.0f, 0.05f), "MPE bend on another channel leaves the note alone");
+            check (near (master.hz, 220.0f * std::exp2 (2.0f / 12.0f), 0.2f), "MPE master channel bends every note by the normal range");
+
+            p.mpe = false;
+            const auto plain = play (p, 2, { juce::MidiMessage::pitchWheel (2, 16383) });
+            check (near (plain.hz, 220.0f * std::exp2 (2.0f / 12.0f), 0.2f), "without MPE every channel bends by the normal range");
+        }
+
+        // Filter types
+        {
+            const auto with = [&] (int type, float cutoff, float resonance)
+            {
+                auto p = open;
+                p.filterType = type;
+                p.cutoffHz = cutoff;
+                p.resonance = resonance;
+                return play (p, 1, {});
+            };
+
+            const float full = reference.peak;
+            bool finite = true;
+            for (int type = 0; type < filter::numTypes; ++type)
+                for (float cutoff : { 30.0f, 220.0f, 18000.0f })
+                {
+                    const auto r = with (type, cutoff, 1.0f);
+                    finite = finite && r.finite && r.peak < 30.0f;
+                }
+            check (finite, "every filter type stays finite at full resonance");
+
+            const float lp24 = with (filter::lowPass24, 60.0f, 0.0f).peak, lp12 = with (filter::lowPass12, 60.0f, 0.0f).peak;
+            const float hp24 = with (filter::highPass24, 1500.0f, 0.0f).peak, hp12 = with (filter::highPass12, 1500.0f, 0.0f).peak;
+            std::printf ("      sine level %.3f: LP12 %.4f, LP24 %.4f, HP12 %.4f, HP24 %.4f\n", (double) full, (double) lp12, (double) lp24,
+                         (double) hp12, (double) hp24);
+            check (lp12 < full * 0.2f && lp24 < lp12 * 0.3f, "low pass 24 is steeper than low pass 12");
+            check (hp12 < full * 0.1f && hp24 < hp12 * 0.2f, "high pass 24 is steeper than high pass 12");
+            check (near (with (filter::highPass12, 30.0f, 0.0f).peak, full, full * 0.1f), "high pass lets the note through above its cutoff");
+
+            // Key tracking moves the cutoff a little below 220 Hz for this note, so tune the notch by search.
+            float deepest = full;
+            for (float cutoff = 200.0f; cutoff < 245.0f; cutoff += 1.0f)
+                deepest = juce::jmin (deepest, with (filter::notch, cutoff, 0.0f).peak);
+            const float band = with (filter::bandPass, 228.0f, 0.5f).peak, bandOff = with (filter::bandPass, 4000.0f, 0.5f).peak;
+            check (deepest < full * 0.05f && near (with (filter::notch, 4000.0f, 0.0f).peak, full, full * 0.05f), "notch removes one frequency only");
+            check (band > bandOff * 8.0f, "band pass keeps what is near its cutoff");
+
+            // The comb rings when its pitch matches the note and cancels half way between.
+            const float combOn = with (filter::comb, 228.0f, 0.6f).peak, combOff = with (filter::comb, 152.0f, 0.6f).peak;
+            std::printf ("      comb: %.3f on the note, %.3f between its teeth\n", (double) combOn, (double) combOff);
+            check (combOn > combOff * 2.0f, "comb filter boosts notes that match its pitch");
+        }
+    }
+
     // Factory presets
     {
         juce::ScopedJuceInitialiser_GUI gui;
@@ -806,6 +949,12 @@ int main()
         const bool reset = near (host.apvts.getRawParameterValue (id::scale)->load(), 0.0f) && host.apvts.getRawParameterValue (id::delayOn)->load() < 0.5f
                                && near (host.apvts.getRawParameterValue (id::cutoff)->load(), 3200.0f, 1.0f);
         check (applied && reset, "applying a preset sets its values and Init restores the defaults");
+
+        // Tuning and MPE belong to the project and survive a preset change.
+        auto* tune = host.apvts.getParameter (id::tuneA4);
+        tune->setValueNotifyingHost (tune->convertTo0to1 (432.0f));
+        applyPreset (host.apvts, presets[2]);
+        check (near (host.apvts.getRawParameterValue (id::tuneA4)->load(), 432.0f, 0.01f), "a preset change keeps the reference pitch");
     }
 
     std::printf ("%d failure(s)\n", failures);
