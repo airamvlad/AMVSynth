@@ -21,6 +21,8 @@ enum Source
     srcMacro2,
     srcMacro3,
     srcMacro4,
+    srcPressure,
+    srcTimbre,
     numSources
 };
 
@@ -47,7 +49,7 @@ inline constexpr int numMacros = 4;
 inline const std::array<const char*, mod::numSources>& getModSources()
 {
     static const std::array<const char*, mod::numSources> names { "None", "LFO 1", "LFO 2", "Filter Env", "Velocity", "Mod Wheel",
-                                                                  "Macro 1", "Macro 2", "Macro 3", "Macro 4" };
+                                                                  "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Pressure", "Timbre" };
     return names;
 }
 

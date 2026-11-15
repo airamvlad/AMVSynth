@@ -108,7 +108,7 @@ public:
             if (wasOn)
             {
                 for (const auto& s : sounding)
-                    out.addEvent (juce::MidiMessage::noteOff (1, s.note), 0);
+                    out.addEvent (juce::MidiMessage::noteOff (s.channel, s.note), 0);
 
                 sounding.clear();
                 held.clear();
@@ -166,7 +166,7 @@ public:
         {
             if (sounding[i].remaining < numSamples)
             {
-                out.addEvent (juce::MidiMessage::noteOff (1, sounding[i].note), juce::jmax (0, sounding[i].remaining));
+                out.addEvent (juce::MidiMessage::noteOff (sounding[i].channel, sounding[i].note), juce::jmax (0, sounding[i].remaining));
                 sounding.erase (sounding.begin() + (std::ptrdiff_t) i);
             }
             else
@@ -182,11 +182,13 @@ private:
     {
         int note;
         float velocity;
+        int channel; // kept so MPE bend and pressure still reach the arpeggiated notes
     };
 
     struct SoundingNote
     {
         int note;
+        int channel;
         int remaining; // samples from the start of the current block until its note off
     };
 
@@ -217,7 +219,7 @@ private:
 
             removeHeld (m.getNoteNumber());
             if (held.size() < held.capacity())
-                held.push_back ({ m.getNoteNumber(), m.getFloatVelocity() });
+                held.push_back ({ m.getNoteNumber(), m.getFloatVelocity(), m.getChannel() });
         }
         else if (m.isNoteOff())
         {
@@ -280,19 +282,19 @@ private:
         for (size_t i = 0; i < sounding.size(); ++i)
             if (sounding[i].note == key.note)
             {
-                out.addEvent (juce::MidiMessage::noteOff (1, key.note), pos);
+                out.addEvent (juce::MidiMessage::noteOff (sounding[i].channel, key.note), pos);
                 sounding.erase (sounding.begin() + (std::ptrdiff_t) i);
                 break;
             }
 
         if (sounding.size() >= sounding.capacity())
         {
-            out.addEvent (juce::MidiMessage::noteOff (1, sounding.front().note), pos);
+            out.addEvent (juce::MidiMessage::noteOff (sounding.front().channel, sounding.front().note), pos);
             sounding.erase (sounding.begin());
         }
 
-        out.addEvent (juce::MidiMessage::noteOn (1, key.note, velocity), pos);
-        sounding.push_back ({ key.note, pos + juce::jmax (1, (int) std::lround (stepSamples * params.gate)) });
+        out.addEvent (juce::MidiMessage::noteOn (key.channel, key.note, velocity), pos);
+        sounding.push_back ({ key.note, key.channel, pos + juce::jmax (1, (int) std::lround (stepSamples * params.gate)) });
     }
 
     HeldKey pickNote()
@@ -310,7 +312,7 @@ private:
         int n = 0;
         for (int o = 0; o < octaves; ++o)
             for (int k = 0; k < keys; ++k)
-                order[(size_t) n++] = { juce::jmin (127, base[(size_t) k].note + 12 * o), base[(size_t) k].velocity };
+                order[(size_t) n++] = { juce::jmin (127, base[(size_t) k].note + 12 * o), base[(size_t) k].velocity, base[(size_t) k].channel };
 
         const int i = noteCounter++;
         int index = 0;

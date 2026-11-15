@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Version to publish as a release, for example v1.1.0. Leave empty to only build."
+        required: false
+        default: ""
 
 concurrency:
   group: build-${{ github.ref }}
@@ -56,10 +61,11 @@ jobs:
           path: ${{ matrix.upload }}
           if-no-files-found: error
 
-  # Pushing a tag such as v1.0.0 publishes a release with both builds attached.
+  # Pushing a tag such as v1.0.0, or running this workflow by hand with a version, publishes a
+  # release with both builds attached.
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release != '')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -79,6 +85,11 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create "$GITHUB_REF_NAME" artifacts/AMVSynth-Windows.zip artifacts/AMVSynth-macOS.zip
-          --repo "$GITHUB_REPOSITORY" --title "AMVSynth $GITHUB_REF_NAME" --generate-notes
+          VERSION: ${{ inputs.release || github.ref_name }}
+        run: |
+          case "$VERSION" in
+            v[0-9]*) ;;
+            *) echo "The version must look like v1.1.0, got '$VERSION'"; exit 1 ;;
+          esac
+          gh release create "$VERSION" artifacts/AMVSynth-Windows.zip artifacts/AMVSynth-macOS.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AMVSynth $VERSION" --generate-notes

@@ -80,6 +80,36 @@ private:
         int clipHold = 0;
     };
 
+    /** An ADSR envelope drawn as a curve. The three handles are dragged to set attack,
+        decay with sustain, and release; a double click puts a handle back to its default. */
+    struct EnvelopeDisplay final : public juce::Component
+    {
+        void setParameters (APVTS&, const char* attack, const char* decay, const char* sustain, const char* release);
+        void paint (juce::Graphics&) override;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+
+        /** Repaints when a value was changed from outside, for example by a preset. */
+        void refresh();
+
+    private:
+        enum Handle { none = -1, attackHandle, decayHandle, releaseHandle };
+
+        juce::Rectangle<float> graphArea() const;
+        float segmentWidth() const;
+        std::array<juce::Point<float>, 5> points() const;
+        int handleAt (juce::Point<float>) const;
+        void set (juce::RangedAudioParameter*, float normalised);
+
+        std::array<juce::RangedAudioParameter*, 4> params {}; // attack, decay, sustain, release
+        std::array<float, 4> shown { -1.0f, -1.0f, -1.0f, -1.0f };
+        int hover = none, dragging = none;
+    };
+
     struct Choice
     {
         juce::ComboBox box;
@@ -139,6 +169,10 @@ private:
     PatternDisplay patternDisplay;
     WaveDisplay waveA, waveB;
     LevelMeter levelMeter;
+    EnvelopeDisplay ampEnvDisplay, filterEnvDisplay;
+    juce::TooltipWindow tooltipWindow { this };
+    juce::Slider tuneBox;
+    std::unique_ptr<APVTS::SliderAttachment> tuneAttachment;
     juce::MidiKeyboardComponent keyboard;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessorEditor)

@@ -236,12 +236,14 @@ inline const std::vector<Preset>& getFactoryPresets()
     return presets;
 }
 
-/** Sets every parameter to its default, then applies the preset's values. Message thread only. */
+/** Sets every parameter to its default, then applies the preset's values. Tuning and MPE settings
+    are kept. Message thread only. */
 inline void applyPreset (juce::AudioProcessorValueTreeState& apvts, const Preset& preset)
 {
     for (auto* p : apvts.processor.getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
-            ranged->setValueNotifyingHost (ranged->getDefaultValue());
+            if (! isGlobalParameter (ranged->getParameterID()))
+                ranged->setValueNotifyingHost (ranged->getDefaultValue());
 
     for (const auto& [paramId, value] : preset.values)
     {

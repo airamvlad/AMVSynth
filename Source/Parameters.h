@@ -4,6 +4,7 @@
 
 #include "Arpeggiator.h"
 #include "Effects.h"
+#include "Filter.h"
 #include "Modulation.h"
 #include "Tuning.h"
 #include "Wavetables.h"
@@ -129,6 +130,10 @@ inline constexpr auto vibDelay = "vibDelay";
 inline constexpr auto bendRange = "bendRange";
 inline constexpr auto glide = "glide";
 inline constexpr auto mono = "mono";
+inline constexpr auto tuneA4 = "tuneA4";
+inline constexpr auto mpe = "mpe";
+inline constexpr auto mpeBend = "mpeBend";
+inline constexpr auto filterType = "filterType";
 inline constexpr auto cutoff = "cutoff";
 inline constexpr auto resonance = "resonance";
 inline constexpr auto filterEnv = "filterEnv";
@@ -169,6 +174,12 @@ inline juce::String lfo (int index, const char* suffix) { return "lfo" + juce::S
 inline juce::String macro (int index) { return "macro" + juce::String (index + 1); }
 inline juce::String slot (int index, const char* suffix) { return "mod" + juce::String (index + 1) + suffix; }
 } // namespace id
+
+/** Settings of the project rather than of a sound; loading a preset does not change them. */
+inline bool isGlobalParameter (const juce::String& paramId)
+{
+    return paramId == id::tuneA4 || paramId == id::mpe || paramId == id::mpeBend;
+}
 
 inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
@@ -454,7 +465,16 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::glide, "Glide", skewed (0.0f, 800.0f, 120.0f), 45.0f, "ms");
     addBool (id::mono, "Mono Legato", true);
 
+    // Tuning and MPE. These belong to the project, not to a sound: presets leave them alone.
+    add (id::tuneA4, "A4 Tuning", Range (400.0f, 480.0f, 0.1f), 440.0f, "Hz");
+    addBool (id::mpe, "MPE", true);
+    add (id::mpeBend, "MPE Bend", Range (1.0f, 96.0f, 1.0f), 48.0f, "st");
+
     // Filter
+    juce::StringArray filterTypes;
+    for (const auto* n : getFilterTypes())
+        filterTypes.add (n);
+    addChoice (id::filterType, "Filter Type", filterTypes, 0);
     add (id::cutoff, "Cutoff", skewed (30.0f, 18000.0f, 1200.0f), 3200.0f, "Hz");
     add (id::resonance, "Resonance", Range (0.0f, 1.0f), 0.25f);
     add (id::filterEnv, "Filter Env", Range (-1.0f, 1.0f), 0.35f);
