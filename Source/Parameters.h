@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Arpeggiator.h"
+#include "Sequencer.h"
 #include "Effects.h"
 #include "Filter.h"
 #include "Modulation.h"
@@ -88,6 +89,14 @@ inline constexpr auto arpOctaves = "arpOctaves";
 inline constexpr auto arpGate = "arpGate";
 inline constexpr auto arpAccent = "arpAccent";
 inline constexpr auto arpPolymeter = "arpPolymeter";
+inline constexpr auto seqOn = "seqOn";
+inline constexpr auto seqMeter = "seqMeter";
+inline constexpr auto seqRate = "seqRate";
+inline constexpr auto seqSteps = "seqSteps";
+inline constexpr auto seqGate = "seqGate";
+inline constexpr auto seqSwing = "seqSwing";
+inline constexpr auto seqFreeCycle = "seqFreeCycle";
+inline constexpr auto seqLatch = "seqLatch";
 inline constexpr auto distOn = "distOn";
 inline constexpr auto distType = "distType";
 inline constexpr auto distDrive = "distDrive";
@@ -555,6 +564,16 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::arpGate, "Arp Gate", Range (10.0f, 150.0f), 60.0f, "%");
     add (id::arpAccent, "Arp Accent", Range (0.0f, 100.0f), 60.0f, "%");
     addBool (id::arpPolymeter, "Arp Polymeter", true);
+
+    // Step sequencer. The steps themselves are saved with the state, not as parameters.
+    addBool (id::seqOn, "Seq On", false);
+    addChoice (id::seqMeter, "Seq Meter", meterNames, 2);
+    addChoice (id::seqRate, "Seq Rate", rateNames, 1);
+    add (id::seqSteps, "Seq Steps", Range (1.0f, 32.0f, 1.0f), 7.0f);
+    add (id::seqGate, "Seq Gate", Range (10.0f, 200.0f), 100.0f, "%");
+    add (id::seqSwing, "Seq Swing", Range (0.0f, 75.0f), 0.0f, "%");
+    addBool (id::seqFreeCycle, "Seq Free Cycle", true);
+    addBool (id::seqLatch, "Seq Latch", false);
 
     // Effects
     juce::StringArray distTypes, gatePatterns, delayTimes;
