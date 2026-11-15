@@ -134,6 +134,18 @@ inline constexpr auto tuneA4 = "tuneA4";
 inline constexpr auto mpe = "mpe";
 inline constexpr auto mpeBend = "mpeBend";
 inline constexpr auto filterType = "filterType";
+inline constexpr auto filter2On = "filter2On";
+inline constexpr auto filter2Type = "filter2Type";
+inline constexpr auto filter2Cutoff = "filter2Cutoff";
+inline constexpr auto filter2Res = "filter2Resonance";
+inline constexpr auto filter2Env = "filter2Env";
+inline constexpr auto filterRouting = "filterRouting";
+inline constexpr auto routeEngine = "routeEngine";
+inline constexpr auto routeOscA = "routeOscA";
+inline constexpr auto routeOscB = "routeOscB";
+inline constexpr auto routeSub = "routeSub";
+inline constexpr auto routeNoise = "routeNoise";
+inline constexpr auto routeSampler = "routeSampler";
 inline constexpr auto cutoff = "cutoff";
 inline constexpr auto resonance = "resonance";
 inline constexpr auto filterEnv = "filterEnv";
@@ -249,6 +261,7 @@ inline int modDestFor (const juce::String& paramId)
         { id::distDrive, mod::dstDistDrive }, { id::distMix, mod::dstDistMix }, { id::gateDepth, mod::dstGateDepth },
         { id::delayFeedback, mod::dstDelayFeedback }, { id::delayTone, mod::dstDelayTone }, { id::delayMix, mod::dstDelayMix },
         { id::reverbSize, mod::dstReverbSize }, { id::reverbMix, mod::dstReverbMix },
+        { id::filter2Cutoff, mod::dstCutoff2 }, { id::filter2Res, mod::dstResonance2 },
         { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
         { id::vibDepth, mod::dstVibrato }, { id::vibRate, mod::dstVibRate }, { id::level, mod::dstVolume },
     };
@@ -606,6 +619,20 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     for (const auto* n : getFilterTypes())
         filterTypes.add (n);
     addChoice (id::filterType, "Filter Type", filterTypes, 0);
+
+    // Filter 2
+    addBool (id::filter2On, "Filter 2 On", false);
+    addChoice (id::filter2Type, "Filter 2 Type", filterTypes, 3);
+    add (id::filter2Cutoff, "Filter 2 Cutoff", skewed (30.0f, 18000.0f, 1200.0f), 200.0f, "Hz");
+    add (id::filter2Res, "Filter 2 Resonance", Range (0.0f, 1.0f), 0.2f);
+    add (id::filter2Env, "Filter 2 Env Amount", Range (-1.0f, 1.0f), 0.0f);
+    addChoice (id::filterRouting, "Filter Routing", { "Serial", "Parallel" }, 0);
+    addChoice (id::routeEngine, "Engine Filter", { "Filter 1", "Filter 2" }, 0);
+    addChoice (id::routeOscA, "Osc A Filter", { "Filter 1", "Filter 2" }, 0);
+    addChoice (id::routeOscB, "Osc B Filter", { "Filter 1", "Filter 2" }, 0);
+    addChoice (id::routeSub, "Sub Filter", { "Filter 1", "Filter 2" }, 0);
+    addChoice (id::routeNoise, "Noise Filter", { "Filter 1", "Filter 2" }, 0);
+    addChoice (id::routeSampler, "Sampler Filter", { "Filter 1", "Filter 2" }, 0);
     add (id::cutoff, "Cutoff", skewed (30.0f, 18000.0f, 1200.0f), 3200.0f, "Hz");
     add (id::resonance, "Resonance", Range (0.0f, 1.0f), 0.25f);
     add (id::filterEnv, "Filter Env", Range (-1.0f, 1.0f), 0.35f);

@@ -286,6 +286,36 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
     addSection ("NOISE", false, 2, 3.0f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
     addSection ("BALKAN ENGINE", true, 2, 2.0f).knobs = makeKnobs (true, { { id::engineLevel, "LEVEL" } });
+    {
+        // The second filter and which filter each source runs through.
+        auto& s = addSection ("FILTER 2", false, 3, 4.0f);
+        s.columnWidth = 128;
+        s.column.push_back (&makeToggle (id::filter2On, "FILTER 2 ON", false)->button);
+        s.column.push_back (&makeChoice (id::filter2Type, false)->box);
+        s.column.push_back (&makeChoice (id::filterRouting, false)->box);
+        s.knobs = makeKnobs (false, { { id::filter2Cutoff, "CUTOFF" }, { id::filter2Res, "RES" }, { id::filter2Env, "ENV" } });
+    }
+    {
+        auto& s = addSection ("FILTER ROUTING", false, 3, 5.0f);
+        s.columnsInColumn = 3;
+        const std::pair<const char*, const char*> routes[] { { id::routeEngine, "ENGINE" }, { id::routeOscA, "OSC A" }, { id::routeOscB, "OSC B" },
+                                                             { id::routeSub, "SUB" }, { id::routeNoise, "NOISE" }, { id::routeSampler, "SAMPLER" } };
+        for (const auto& [paramId, name] : routes)
+        {
+            auto* choice = makeChoice (paramId, false);
+            // Each box shows its source in front of the filter it goes to.
+            if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter (paramId)))
+            {
+                const int selected = choice->box.getSelectedId();
+                choice->box.clear (juce::dontSendNotification);
+                for (int i = 0; i < param->choices.size(); ++i)
+                    choice->box.addItem (juce::String (name) + ":  " + param->choices[i], i + 1);
+                choice->box.setSelectedId (selected, juce::dontSendNotification);
+            }
+            choice->box.setTooltip ("The filter this source runs through when FILTER 2 is on. In Serial mode filter 1 runs into filter 2.");
+            s.column.push_back (&choice->box);
+        }
+    }
 
     // SAMPLE page: the sampler with its classic and granular modes.
     buildingPage = 6;
@@ -1098,7 +1128,7 @@ float AMVSynthAudioProcessorEditor::ModKnob::proportionWith (float x) const
     const auto range = param->getNormalisableRange();
 
     // These two are not moved in a straight line, so follow what the engine does with them.
-    if (dest == amv::mod::dstCutoff)
+    if (dest == amv::mod::dstCutoff || dest == amv::mod::dstCutoff2)
         return param->convertTo0to1 (juce::jlimit (range.start, range.end, param->convertFrom0to1 (base) * std::exp2 (x * 5.0f)));
 
     if (dest == amv::mod::dstVolume)

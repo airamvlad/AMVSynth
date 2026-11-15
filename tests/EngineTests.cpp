@@ -1325,6 +1325,93 @@ int main()
             }
         }
 
+        // Formant and phaser types, the second filter and its routing. The note is A3, a sine at 220 Hz.
+        {
+            const float full = reference.peak;
+            const auto level = [&] (const std::function<void (EngineParams&)>& setUp)
+            {
+                auto p = open;
+                setUp (p);
+                const auto r = play (p, 1, {});
+                return r.finite ? r.peak : 1.0e9f;
+            };
+
+            // A (first formant near 730 Hz) against I (270 Hz) for a 220 Hz note.
+            const float vowelA = level ([] (EngineParams& p) { p.filterType = filter::formant; p.cutoffHz = 200.0f; p.resonance = 0.6f; });
+            const float vowelI = level ([] (EngineParams& p) { p.filterType = filter::formant; p.cutoffHz = 1265.0f; p.resonance = 0.6f; });
+            std::printf ("      formant on a 220 Hz note: A %.4f, I %.4f, unfiltered %.4f\n", (double) vowelA, (double) vowelI, (double) full);
+            check (vowelI > vowelA * 2.0f && vowelI < full * 4.0f, "the formant filter moves through the vowels with the cutoff");
+
+            float deepest = full;
+            for (float cutoff = 60.0f; cutoff < 1200.0f; cutoff *= 1.04f)
+                deepest = juce::jmin (deepest, level ([cutoff] (EngineParams& p) { p.filterType = filter::phaser; p.cutoffHz = cutoff; p.resonance = 0.0f; }));
+            const float away = level ([] (EngineParams& p) { p.filterType = filter::phaser; p.cutoffHz = 15000.0f; p.resonance = 0.0f; });
+            check (deepest < full * 0.1f && near (away, full, full * 0.1f), "the phaser cuts a notch that the cutoff moves");
+
+            // Filter 2
+            const auto highPass2 = [] (EngineParams& p)
+            {
+                p.filter2On = true;
+                p.filter2Type = filter::highPass24;
+                p.cutoff2Hz = 6000.0f;
+                p.resonance2 = 0.0f;
+            };
+            const float serial = level (highPass2);
+            const float ignored = level ([&] (EngineParams& p) { highPass2 (p); p.filter2On = false; p.filterRoute = { 1, 1, 1, 1, 1, 1 }; });
+            check (serial < full * 0.01f && near (ignored, full, full * 0.001f), "filter 2 follows filter 1 in series, and does nothing while it is off");
+
+            const float parallel = level ([&] (EngineParams& p) { highPass2 (p); p.filtersParallel = true; });
+            const float parallelTo2 = level ([&] (EngineParams& p) { highPass2 (p); p.filtersParallel = true; p.filterRoute[EngineParams::routeOscA] = 1; });
+            check (near (parallel, full, full * 0.01f) && parallelTo2 < full * 0.01f, "in parallel each source is heard through its own filter only");
+
+            // In series a source sent to filter 2 skips filter 1.
+            const auto closedFirst = [] (EngineParams& p)
+            {
+                p.filterType = filter::highPass24;
+                p.cutoffHz = 9000.0f;
+                p.filter2On = true;
+                p.filter2Type = filter::lowPass12;
+                p.cutoff2Hz = 18000.0f;
+                p.resonance2 = 0.0f;
+            };
+            const float through1 = level (closedFirst);
+            const float skip1 = level ([&] (EngineParams& p) { closedFirst (p); p.filterRoute[EngineParams::routeOscA] = 1; });
+            check (through1 < full * 0.01f && near (skip1, full, full * 0.05f), "a source routed to filter 2 skips filter 1");
+
+            // Modulation reaches filter 2.
+            const float opened = level ([&] (EngineParams& p)
+                                        {
+                                            p.filter2On = true;
+                                            p.filter2Type = filter::lowPass24;
+                                            p.cutoff2Hz = 30.0f;
+                                            p.modMacros[0] = 1.0f;
+                                            p.slots[0] = { mod::srcMacro1, mod::dstCutoff2, 1.0f };
+                                        });
+            const float shut = level ([] (EngineParams& p) { p.filter2On = true; p.filter2Type = filter::lowPass24; p.cutoff2Hz = 30.0f; });
+            check (shut < full * 0.05f && opened > full * 0.5f && modDestFor (id::filter2Cutoff) == mod::dstCutoff2 && modDestFor (id::filter2Res) == mod::dstResonance2,
+                   "the cutoff of filter 2 is a modulation destination");
+
+            // Everything at once with both filters ringing stays bounded.
+            EngineParams busy;
+            busy.oscA.level = 0.7f;
+            busy.oscB.level = 0.7f;
+            busy.subLevel = 0.5f;
+            busy.noiseLevel = 0.3f;
+            busy.filter2On = true;
+            busy.filter2Type = filter::formant;
+            busy.resonance2 = 1.0f;
+            busy.resonance = 1.0f;
+            busy.filterRoute = { 0, 1, 0, 1, 0, 1 };
+            bool bounded = true;
+            for (bool side : { false, true })
+            {
+                busy.filtersParallel = side;
+                const auto r = render (busy);
+                bounded = bounded && r.finite && r.peak > 0.01f && r.peak < 30.0f && r.tailPeak < 0.001f;
+            }
+            check (bounded, "two resonant filters with split sources stay finite");
+        }
+
         // Filter types
         {
             const auto with = [&] (int type, float cutoff, float resonance)

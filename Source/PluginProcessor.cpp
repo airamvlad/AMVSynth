@@ -158,6 +158,14 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.mpe = value (id::mpe) > 0.5f;
     p.mpeBendRange = value (id::mpeBend);
     p.filterType = juce::roundToInt (value (id::filterType));
+    p.filter2On = value (id::filter2On) > 0.5f;
+    p.filtersParallel = value (id::filterRouting) > 0.5f;
+    p.filter2Type = juce::roundToInt (value (id::filter2Type));
+    p.cutoff2Hz = value (id::filter2Cutoff);
+    p.resonance2 = value (id::filter2Res);
+    p.filter2Env = value (id::filter2Env);
+    p.filterRoute = { juce::roundToInt (value (id::routeEngine)), juce::roundToInt (value (id::routeOscA)), juce::roundToInt (value (id::routeOscB)),
+                      juce::roundToInt (value (id::routeSub)), juce::roundToInt (value (id::routeNoise)), juce::roundToInt (value (id::routeSampler)) };
     p.cutoffHz = value (id::cutoff);
     p.resonance = value (id::resonance);
     p.filterEnv = value (id::filterEnv);

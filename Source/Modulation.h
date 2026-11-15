@@ -78,6 +78,8 @@ enum Dest
     dstDelayMix,
     dstReverbSize,
     dstReverbMix,
+    dstCutoff2,
+    dstResonance2,
     numDests
 };
 
@@ -177,7 +179,7 @@ inline const std::array<const char*, mod::numDests>& getModDests()
                                                                 "Grain Density", "Grain Spray", "Grain Scan",
                                                                 "Amp Attack", "Amp Decay", "Amp Release", "Filter Attack", "Filter Decay", "Filter Release",
                                                                 "Distortion Drive", "Distortion Mix", "Gate Depth", "Delay Feedback", "Delay Tone",
-                                                                "Delay Mix", "Reverb Size", "Reverb Mix" };
+                                                                "Delay Mix", "Reverb Size", "Reverb Mix", "Filter 2 Cutoff", "Filter 2 Resonance" };
     return names;
 }
 

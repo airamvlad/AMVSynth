@@ -19,6 +19,8 @@ enum Type
     highPass24,
     notch,
     comb,
+    formant,
+    phaser,
     numTypes
 };
 } // namespace filter
@@ -26,7 +28,7 @@ enum Type
 inline const std::array<const char*, filter::numTypes>& getFilterTypes()
 {
     static const std::array<const char*, filter::numTypes> names { "Low Pass 12", "Low Pass 24", "Band Pass", "High Pass 12",
-                                                                   "High Pass 24", "Notch", "Comb" };
+                                                                   "High Pass 24", "Notch", "Comb", "Formant", "Phaser" };
     return names;
 }
 
@@ -34,7 +36,9 @@ inline const std::array<const char*, filter::numTypes>& getFilterTypes()
 
     The low, band and high pass and the notch are a state variable filter; the 24 dB types run a
     second, non-resonant stage after it. The comb is a tuned delay with feedback: its cutoff sets
-    the pitch of the comb and the resonance how long it rings. */
+    the pitch of the comb and the resonance how long it rings. The formant type is three band
+    passes that the cutoff moves through the vowels A, E, I, O, U, with the resonance as their
+    sharpness. The phaser is four all-pass stages around the cutoff with the resonance as feedback. */
 class VoiceFilter
 {
 public:
@@ -59,7 +63,9 @@ public:
     {
         for (auto& c : channels)
         {
-            c.s1 = c.s2 = c.t1 = c.t2 = c.damp = 0.0f;
+            c.s1 = c.s2 = c.t1 = c.t2 = c.damp = c.phaserFeedback = 0.0f;
+            c.formant = {};
+            c.allPass = {};
             c.write = 0;
             c.delayNow = -1.0f;
             std::fill (c.delay.begin(), c.delay.end(), 0.0f);
@@ -82,6 +88,30 @@ public:
         combDelay = sampleRate / juce::jmax (minCombHz, cutoffHz);
         combFeedback = 0.97f * std::sqrt (resonance);
         combGain = 1.0f - 0.85f * combFeedback;
+
+        if (type == filter::formant)
+        {
+            // The cutoff walks through the vowels: 200 Hz is A, 8 kHz is U.
+            static constexpr float vowels[5][3] { { 730.0f, 1090.0f, 2440.0f }, { 530.0f, 1840.0f, 2480.0f }, { 270.0f, 2290.0f, 3010.0f },
+                                                  { 570.0f, 840.0f, 2410.0f }, { 300.0f, 870.0f, 2240.0f } };
+            const float place = juce::jlimit (0.0f, 3.999f, std::log2 (cutoffHz / 200.0f) / std::log2 (40.0f) * 4.0f);
+            const int vowel = (int) place;
+            const float mix = place - (float) vowel;
+            formantK = 1.0f / (3.0f + resonance * 17.0f);
+
+            for (size_t f = 0; f < 3; ++f)
+            {
+                const float hz = vowels[vowel][f] + (vowels[vowel + 1][f] - vowels[vowel][f]) * mix;
+                formantG[f] = std::tan (juce::MathConstants<float>::pi * juce::jmin (hz, 0.45f * sampleRate) / sampleRate);
+                formantH[f] = 1.0f / (1.0f + formantG[f] * (formantG[f] + formantK));
+            }
+        }
+        else if (type == filter::phaser)
+        {
+            const float t = std::tan (juce::MathConstants<float>::pi * cutoffHz / sampleRate);
+            allPassCoeff = (t - 1.0f) / (t + 1.0f);
+            phaserAmount = 0.9f * resonance;
+        }
     }
 
     float processSample (int channel, float x) noexcept
@@ -90,6 +120,10 @@ public:
 
         if (type == filter::comb)
             return processComb (c, x);
+        if (type == filter::formant)
+            return processFormant (c, x);
+        if (type == filter::phaser)
+            return processPhaser (c, x);
 
         const float hp = h * (x - c.s1 * (g + k) - c.s2);
         const float bp = hp * g + c.s1;
@@ -114,8 +148,45 @@ private:
         float s1 = 0.0f, s2 = 0.0f, t1 = 0.0f, t2 = 0.0f;
         std::vector<float> delay;
         int write = 0;
-        float delayNow = -1.0f, damp = 0.0f;
+        float delayNow = -1.0f, damp = 0.0f, phaserFeedback = 0.0f;
+        std::array<std::array<float, 2>, 3> formant {};
+        std::array<float, 4> allPass {};
     };
+
+    float processFormant (Channel& c, float x) const noexcept
+    {
+        // Three band passes side by side; the higher formants are quieter, as in a voice.
+        static constexpr float gains[3] { 1.0f, 0.6f, 0.35f };
+        float y = 0.0f;
+
+        for (size_t f = 0; f < 3; ++f)
+        {
+            auto& state = c.formant[f];
+            const float fg = formantG[f];
+            const float hp = formantH[f] * (x - state[0] * (fg + formantK) - state[1]);
+            const float bp = hp * fg + state[0];
+            state[0] = hp * fg + bp;
+            state[1] = bp * fg + state[1] + bp * fg;
+            y += bp * formantK * gains[f];
+        }
+
+        return y * 2.2f;
+    }
+
+    float processPhaser (Channel& c, float x) const noexcept
+    {
+        float y = x + c.phaserFeedback * phaserAmount;
+
+        for (auto& z : c.allPass)
+        {
+            const float out = allPassCoeff * y + z;
+            z = y - allPassCoeff * out;
+            y = out;
+        }
+
+        c.phaserFeedback = y;
+        return 0.5f * (x + y);
+    }
 
     float secondStage (Channel& c, float x, bool highPass) const noexcept
     {
@@ -156,6 +227,8 @@ private:
     int type = filter::lowPass12, mask = 255;
     float g = 0.1f, k = 1.0f, h = 1.0f, h2 = 1.0f, bandGain = 1.0f;
     float combDelay = 100.0f, combFeedback = 0.0f, combGain = 1.0f, smoothCoeff = 0.01f;
+    float formantK = 0.3f, allPassCoeff = 0.0f, phaserAmount = 0.0f;
+    std::array<float, 3> formantG {}, formantH {};
     std::array<Channel, 2> channels;
 };
 } // namespace amv
