@@ -18,6 +18,14 @@ inline const juce::Colour text { 0xffe6e9ee };
 inline const juce::Colour dimText { 0xff9aa4b2 };
 inline const juce::Colour teal { 0xff2dd4bf };
 inline const juce::Colour red { 0xfff0616d };
+
+/** Every modulation source has its own colour, on its chip and on the rings around the knobs. */
+inline juce::Colour forSource (int source)
+{
+    static const juce::uint32 colours[amv::mod::numSources] { 0xff9aa4b2, 0xfff5b84a, 0xffb48cf2, 0xff4aa8ff, 0xff7ddc6f, 0xffff8a5c,
+                                                              0xfff06292, 0xffffd54f, 0xff4dd0e1, 0xffaed581, 0xffe57373, 0xff9fa8da };
+    return juce::Colour (colours[juce::jlimit (0, (int) amv::mod::numSources - 1, source)]);
+}
 } // namespace colour
 
 class LookAndFeel final : public juce::LookAndFeel_V4
@@ -31,6 +39,7 @@ public:
 } // namespace amv
 
 class AMVSynthAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                           public juce::DragAndDropContainer,
                                            private juce::Timer
 {
 public:
@@ -43,9 +52,82 @@ public:
 private:
     using APVTS = juce::AudioProcessorValueTreeState;
 
+    /** One modulation routed to a knob. */
+    struct Assignment
+    {
+        int slot = 0, source = 0;
+        float amount = 0.0f;
+
+        bool operator== (const Assignment& other) const noexcept
+        {
+            return slot == other.slot && source == other.source && std::abs (amount - other.amount) < 1.0e-5f;
+        }
+    };
+
+    /** A rotary knob. When its parameter can be modulated it takes a source dropped on it, shows
+        a ring for every modulation with a dot at the value as it is right now, sets the depth
+        with a shift-drag and opens a menu on a right click. */
+    struct ModKnob final : public juce::Slider,
+                           public juce::DragAndDropTarget
+    {
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        bool isInterestedInDragSource (const SourceDetails&) override;
+        void itemDragEnter (const SourceDetails&) override;
+        void itemDragExit (const SourceDetails&) override;
+        void itemDropped (const SourceDetails&) override;
+
+        /** Where the knob stands, 0..1, with a modulation sum of `x` applied. */
+        float proportionWith (float x) const;
+
+        AMVSynthAudioProcessorEditor* owner = nullptr;
+        juce::RangedAudioParameter* param = nullptr;
+        int dest = -1;
+        std::vector<Assignment> assignments;
+        float live = 0.0f;       // sum of source times amount, as it is now
+        bool showAsTarget = false, dropHover = false;
+
+    private:
+        bool depthDrag = false;
+        float depthStart = 0.0f;
+    };
+
+    /** The row of modulation sources. A chip is dragged onto a knob to modulate it. */
+    struct ModSourceBar final : public juce::Component
+    {
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
+        juce::Rectangle<float> chipBounds (int source) const;
+        int chipAt (juce::Point<float>) const;
+
+        AMVSynthAudioProcessorEditor* owner = nullptr;
+        std::array<float, amv::mod::numSources> values {};
+        int hover = 0, pressed = 0;
+    };
+
+    /** The shape of an LFO with a marker at its current value. */
+    struct LfoDisplay final : public juce::Component
+    {
+        void paint (juce::Graphics&) override;
+        int shape = 0, source = amv::mod::srcLfo1;
+        float value = 0.0f;
+    };
+
+    /** A panel of text. */
+    struct TextDisplay final : public juce::Component
+    {
+        void paint (juce::Graphics&) override;
+        juce::StringArray lines;
+    };
+
     struct Knob
     {
-        juce::Slider slider;
+        ModKnob slider;
         juce::Label label;
         std::unique_ptr<APVTS::SliderAttachment> attachment;
     };
@@ -160,7 +242,7 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
-    std::array<juce::TextButton, 4> tabs;
+    std::array<juce::TextButton, 5> tabs;
     int currentPage = 0, buildingPage = 0;
 
     juce::ComboBox presetBox;
@@ -176,6 +258,22 @@ private:
     juce::TooltipWindow tooltipWindow { this };
     std::array<juce::TextButton, 2> importButtons;
     void importWavetable (int osc);
+
+    // Modulation by drag and drop.
+    std::vector<Assignment> assignmentsFor (int dest) const;
+    void assignModulation (int source, int dest);
+    void setSlotAmount (int slot, float amount, bool gesture);
+    void clearSlot (int slot);
+    void showModMenu (ModKnob&);
+    void updateModulationDisplay();
+    struct SlotParams { juce::RangedAudioParameter* source; juce::RangedAudioParameter* dest; juce::RangedAudioParameter* amount; };
+    std::array<SlotParams, amv::mod::numSlots> slotParams {};
+    ModSourceBar sourceBar;
+    std::array<LfoDisplay, amv::mod::numLfos> lfoDisplays;
+    TextDisplay helpDisplay;
+    juce::Label statusLabel;
+    int statusTicks = 0;
+    void showStatus (const juce::String&);
     juce::Slider tuneBox;
     std::unique_ptr<APVTS::SliderAttachment> tuneAttachment;
     juce::MidiKeyboardComponent keyboard;

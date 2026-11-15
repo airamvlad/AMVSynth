@@ -49,6 +49,9 @@ public:
     /** The imported wavetable of an oscillator, or null. Message thread only. */
     const amv::UserWavetable* getUserWavetable (int osc) const noexcept { return activeUserWave[(size_t) osc].load(); }
 
+    /** The modulation sources as they are now, indexed by amv::mod::Source, for the display. */
+    std::array<std::atomic<float>, amv::mod::numSources> modSourceValues {};
+
     /** Highest output level since the editor last read it; the editor resets it to zero. */
     std::array<std::atomic<float>, 2> outputPeak {};
 
@@ -82,6 +85,7 @@ private:
     std::array<LfoRefs, amv::mod::numLfos> lfoRefs {};
     std::array<std::atomic<float>*, amv::mod::numMacros> macroRefs {};
     std::array<SlotRefs, amv::mod::numSlots> slotRefs {};
+    std::array<std::array<std::array<float, 2>, 4>, 17> engineRanges {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessor)
 };

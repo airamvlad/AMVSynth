@@ -38,10 +38,22 @@ enum Dest
     dstEngineLevel,
     dstNoiseLevel,
     dstVolume,
+    dstFilterEnv,
+    dstSubLevel,
+    dstVibrato,
+    dstVibRate,
+    dstEngine1, // the four controls of the selected Balkan model
+    dstEngine2,
+    dstEngine3,
+    dstEngine4,
+    dstOscADetune,
+    dstOscBDetune,
+    dstOscAPitch,
+    dstOscBPitch,
     numDests
 };
 
-inline constexpr int numSlots = 6;
+inline constexpr int numSlots = 8;
 inline constexpr int numLfos = 2;
 inline constexpr int numMacros = 4;
 } // namespace mod
@@ -56,7 +68,10 @@ inline const std::array<const char*, mod::numSources>& getModSources()
 inline const std::array<const char*, mod::numDests>& getModDests()
 {
     static const std::array<const char*, mod::numDests> names { "Pitch", "Cutoff", "Resonance", "Osc A Position", "Osc B Position",
-                                                                "Osc A Level", "Osc B Level", "Engine Level", "Noise Level", "Volume" };
+                                                                "Osc A Level", "Osc B Level", "Engine Level", "Noise Level", "Volume",
+                                                                "Filter Env Amount", "Sub Level", "Vibrato Depth", "Vibrato Rate",
+                                                                "Engine Knob 1", "Engine Knob 2", "Engine Knob 3", "Engine Knob 4",
+                                                                "Osc A Detune", "Osc B Detune", "Osc A Pitch", "Osc B Pitch" };
     return names;
 }
 

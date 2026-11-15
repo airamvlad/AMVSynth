@@ -937,6 +937,29 @@ int main()
             check (near (plain.hz, 220.0f * std::exp2 (2.0f / 12.0f), 0.2f), "without MPE every channel bends by the normal range");
         }
 
+        // Modulation destinations that follow a knob's own range.
+        {
+            auto p = open;
+            p.modMacros[0] = 0.25f;
+            p.slots[0] = { mod::srcMacro1, mod::dstOscAPitch, 1.0f }; // a quarter of the 48 semitone range
+            const auto octave = play (p, 1, {});
+            check (near (octave.hz, 440.0f, 0.1f), "a macro on oscillator pitch moves it across the knob's range");
+
+            EngineParams lead;
+            lead.modMacros[1] = 1.0f;
+            const auto plain = render (lead);
+            lead.slots[0] = { mod::srcMacro2, mod::dstEngine1, 0.45f }; // tone, from saws towards pulse
+            const auto toned = render (lead);
+            lead.slots[0] = { mod::srcMacro2, mod::dstEngine4, 1.0f };  // sub oscillator
+            const auto withSub = render (lead);
+            check (toned.finite && withSub.finite && ! near (toned.peak, plain.peak, 1.0e-3f) && ! near (withSub.peak, plain.peak, 1.0e-3f),
+                   "modulation reaches the knobs of the Balkan model");
+
+            check (modDestFor (id::cutoff) == mod::dstCutoff && modDestFor (id::gusRasp) == mod::dstEngine3
+                       && modDestFor (id::oscBDetune) == mod::dstOscBDetune && modDestFor (id::glide) == -1,
+                   "knobs map to their modulation destinations");
+        }
+
         // Filter types
         {
             const auto with = [&] (int type, float cutoff, float resonance)
