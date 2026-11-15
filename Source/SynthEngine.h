@@ -45,6 +45,7 @@ struct OscParams
     float pitch = 0.0f;        // semitones
     float fineCents = 0.0f;
     float level = 0.0f;
+    float width = 0.0f;        // 0 = mono, 1 = unison copies spread fully left and right
 };
 
 /** Values read from the plugin parameters once per audio block. */
@@ -136,7 +137,7 @@ public:
         sampleRate = newSampleRate;
         ampEnv.setSampleRate (newSampleRate);
         fltEnv.setSampleRate (newSampleRate);
-        filter.prepare ({ newSampleRate, 64, 1 });
+        filter.prepare ({ newSampleRate, 64, 2 });
         filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
 
         // Plucked strings: long enough for the lowest note at this sample rate.
@@ -231,7 +232,7 @@ public:
     /** Adds this voice to `out` (mono). `bend` is the pitch wheel offset in semitones.
         `sources` holds the shared modulation sources (LFOs, mod wheel, macros) indexed by
         mod::Source, or is null when no modulation slot is in use. */
-    void render (float* out, int numSamples, const EngineParams& base, float bend, const float* sources = nullptr)
+    void render (float* out, float* outRight, int numSamples, const EngineParams& base, float bend, const float* sources = nullptr)
     {
         if (! isActive())
             return;
@@ -315,6 +316,9 @@ public:
 
         const bool subOn = p.subLevel > 0.0f, noiseOn = p.noiseLevel > 0.0f;
         const bool extras = oscA.on || oscB.on || subOn;
+
+        // Only spread unison needs a second filter; everything else is the same on both sides.
+        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide);
         const float subRatio = p.subOctave >= 2 ? 0.25f : 0.5f;
         const float noiseCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (p.noiseColorHz, 0.45f * sr) / sr);
 
@@ -343,7 +347,7 @@ public:
                 releaseTime += dt;
             }
 
-            float s = 0.0f;
+            float s = 0.0f, oscLeft = 0.0f, oscRight = 0.0f;
             if (p.engineLevel > 0.0f)
             {
                 switch (p.model)
@@ -367,9 +371,9 @@ public:
                 const float inc = midiToHz (pitch) / sr;
 
                 if (oscA.on)
-                    s += renderOsc (oscPhasesA, oscA, inc);
+                    renderOsc (oscPhasesA, oscA, inc, oscLeft, oscRight);
                 if (oscB.on)
-                    s += renderOsc (oscPhasesB, oscB, inc);
+                    renderOsc (oscPhasesB, oscB, inc, oscLeft, oscRight);
 
                 if (subOn)
                 {
@@ -386,8 +390,10 @@ public:
                 s += noiseLp * p.noiseLevel * 0.7f;
             }
 
-            s = filter.processSample (0, s);
-            out[i] += s * ampEnv.getNextSample() * (0.35f + 0.65f * velocity) * modGain;
+            const float gain = ampEnv.getNextSample() * (0.35f + 0.65f * velocity) * modGain;
+            const float left = filter.processSample (0, s + oscLeft);
+            out[i] += left * gain;
+            outRight[i] += (wide ? filter.processSample (1, s + oscRight) : left) * gain;
         }
 
         if (! isActive())
@@ -481,6 +487,8 @@ private:
         const float* waveB = nullptr;
         float frameMix = 0.0f, gain = 0.0f;
         float ratio[maxUnison] {};    // frequency of each copy relative to the note
+        float panLeft[maxUnison] {}, panRight[maxUnison] {};
+        bool wide = false;
     };
 
     /** `noteInc` is the phase increment of the note itself, with a little headroom. */
@@ -499,7 +507,16 @@ private:
             const float spread = oc.count > 1 ? 2.0f * (float) i / (float) (oc.count - 1) - 1.0f : 0.0f;
             oc.ratio[i] = std::exp2 ((offset + spread * op.detuneCents * 0.01f) / 12.0f);
             highest = juce::jmax (highest, oc.ratio[i]);
+
+            // Neighbouring copies go to opposite sides, the outer ones furthest out. Equal power,
+            // scaled so a centred copy has a gain of one on each side.
+            const float pan = ((i & 1) == 0 ? -1.0f : 1.0f) * std::abs (spread) * juce::jlimit (0.0f, 1.0f, op.width);
+            const float angle = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            oc.panLeft[i] = std::cos (angle) * juce::MathConstants<float>::sqrt2;
+            oc.panRight[i] = std::sin (angle) * juce::MathConstants<float>::sqrt2;
         }
+
+        oc.wide = oc.count > 1 && op.width > 0.001f;
 
         const auto& bank = WavetableBank::get();
         const int table = juce::jlimit (0, WavetableBank::numTables - 1, op.table);
@@ -513,9 +530,9 @@ private:
         oc.gain = op.level * 0.75f / std::sqrt ((float) oc.count);
     }
 
-    static float renderOsc (OscPhases& phases, const OscCoeffs& oc, float inc) noexcept
+    static void renderOsc (OscPhases& phases, const OscCoeffs& oc, float inc, float& left, float& right) noexcept
     {
-        float sum = 0.0f;
+        float sumLeft = 0.0f, sumRight = 0.0f;
 
         for (int i = 0; i < oc.count; ++i)
         {
@@ -525,14 +542,17 @@ private:
             const float frac = pos - (float) index;
             const float a = oc.waveA[index] + (oc.waveA[index + 1] - oc.waveA[index]) * frac;
             const float b = oc.waveB[index] + (oc.waveB[index + 1] - oc.waveB[index]) * frac;
-            sum += a + (b - a) * oc.frameMix;
+            const float v = a + (b - a) * oc.frameMix;
+            sumLeft += v * oc.panLeft[i];
+            sumRight += v * oc.panRight[i];
 
             phase += inc * oc.ratio[i];
             if (phase >= 1.0f)
                 phase -= 1.0f;
         }
 
-        return sum * oc.gain;
+        left += sumLeft * oc.gain;
+        right += sumRight * oc.gain;
     }
 
     void setNote (const NoteEvent& e)
@@ -984,6 +1004,7 @@ public:
             v.prepare (sampleRate);
 
         mix.assign ((size_t) juce::jmax (maxBlockSize, chunkSize), 0.0f);
+        mixRight.assign (mix.size(), 0.0f);
         engineSampleRate = (float) sampleRate;
         droneLevel = 0.0f;
         droneLp = 0.0f;
@@ -1022,9 +1043,13 @@ public:
         const int numSamples = buffer.getNumSamples();
         blockTransport = transport;
         if ((int) mix.size() < numSamples)
+        {
             mix.resize ((size_t) numSamples);
+            mixRight.resize ((size_t) numSamples);
+        }
 
         std::fill (mix.begin(), mix.begin() + numSamples, 0.0f);
+        std::fill (mixRight.begin(), mixRight.begin() + numSamples, 0.0f);
 
         int pos = 0;
         for (const auto meta : midi)
@@ -1037,8 +1062,9 @@ public:
 
         renderRange (pos, numSamples);
 
+        // Left and right for a stereo buffer; a mono buffer gets the left side.
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            buffer.copyFrom (ch, 0, mix.data(), numSamples);
+            buffer.copyFrom (ch, 0, ch == 1 ? mixRight.data() : mix.data(), numSamples);
     }
 
     void allNotesOff()
@@ -1070,12 +1096,12 @@ private:
             bool anyHeld = false;
             for (auto& v : voices)
             {
-                v.render (mix.data() + start, n, params, bendSmooth, modActive ? sources : nullptr);
+                v.render (mix.data() + start, mixRight.data() + start, n, params, bendSmooth, modActive ? sources : nullptr);
                 anyHeld = anyHeld || v.isHeld();
             }
 
             if (params.model == Model::gajde)
-                renderDrone (mix.data() + start, n, anyHeld);
+                renderDrone (mix.data() + start, mixRight.data() + start, n, anyHeld);
 
             start += n;
         }
@@ -1083,7 +1109,7 @@ private:
 
     /** The gajde drone: one steady pipe on the scale root, two octaves below middle C, sounding
         for as long as any note is held. */
-    void renderDrone (float* out, int numSamples, bool anyHeld)
+    void renderDrone (float* out, float* outRight, int numSamples, bool anyHeld)
     {
         const float sr = engineSampleRate;
         const float target = anyHeld ? params.macro[0] * 0.3f * params.engineLevel : 0.0f;
@@ -1104,6 +1130,7 @@ private:
             const float raw = (dronePhase < 0.25f ? 1.0f : -1.0f) * 0.6f + (2.0f * dronePhase - 1.0f) * 0.4f;
             droneLp += (raw - droneLp) * lpCoeff;
             out[i] += droneLp * droneLevel;
+            outRight[i] += droneLp * droneLevel;
 
             dronePhase += inc;
             if (dronePhase >= 1.0f)
@@ -1213,7 +1240,7 @@ private:
     }
 
     std::array<Voice, maxVoices> voices;
-    std::vector<float> mix;
+    std::vector<float> mix, mixRight;
     std::vector<int> heldNotes;
     EngineParams params;
     Tuning tuning;

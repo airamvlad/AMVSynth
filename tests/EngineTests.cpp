@@ -417,6 +417,44 @@ int main()
             check (firstL > 0.1f && firstR < 0.01f && secondR > 0.02f && between < 0.01f, "ping-pong delay echoes at 3/16 on alternating sides");
         }
 
+        // Distortion does not alias: drive a 5 kHz sine hard and look at 3 kHz, where the ninth
+        // harmonic (45 kHz) would land if it folded back at 48 kHz.
+        {
+            FxChain fx;
+            fx.prepare (sr, block);
+            FxParams p;
+            p.distOn = true;
+            p.distDriveDb = 24.0f;
+            const auto twoPi = juce::MathConstants<double>::twoPi;
+            double re5 = 0.0, im5 = 0.0, re3 = 0.0, im3 = 0.0;
+
+            for (int b = 0; b < 60; ++b)
+            {
+                juce::AudioBuffer<float> buffer (2, block);
+                for (int i = 0; i < block; ++i)
+                {
+                    const auto s = (float) (0.25 * std::sin (twoPi * 5000.0 * (double) (b * block + i) / sr));
+                    buffer.setSample (0, i, s);
+                    buffer.setSample (1, i, s);
+                }
+                fx.process (buffer, p, {});
+
+                if (b >= 10)
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const double t = (double) (b * block + i) / sr, v = buffer.getSample (0, i);
+                        re5 += v * std::cos (twoPi * 5000.0 * t);
+                        im5 += v * std::sin (twoPi * 5000.0 * t);
+                        re3 += v * std::cos (twoPi * 3000.0 * t);
+                        im3 += v * std::sin (twoPi * 3000.0 * t);
+                    }
+            }
+
+            const double ratio = std::hypot (re3, im3) / std::hypot (re5, im5);
+            std::printf ("      alias at 3 kHz: %.1f dB below the tone\n", -20.0 * std::log10 (ratio + 1.0e-12));
+            check (ratio < 0.003, "distortion is oversampled and does not alias");
+        }
+
         // Kick duck: quiet right after each beat, back to full level before the next.
         {
             FxParams p;
@@ -510,6 +548,37 @@ int main()
         q.noiseLevel = 1.0f;
         const auto noiseOnly = render (q);
         check (sub.finite && sub.peak > 0.05f && noiseOnly.finite && noiseOnly.peak > 0.02f, "sub oscillator and noise");
+
+        // Unison width: spread copies differ between the sides, width zero stays mono.
+        {
+            const auto difference = [] (float width, int unison)
+            {
+                SynthEngine engine;
+                engine.prepare (48000.0, 512);
+                EngineParams w;
+                w.engineLevel = 0.0f;
+                w.oscA = { 0, 0.66f, unison, 25.0f, 0.0f, 0.0f, 1.0f, width };
+                engine.setParams (w);
+                float diff = 0.0f, level = 0.0f;
+                for (int block = 0; block < 40; ++block)
+                {
+                    juce::MidiBuffer midi;
+                    if (block == 0)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 0);
+                    juce::AudioBuffer<float> buffer (2, 512);
+                    buffer.clear();
+                    engine.process (buffer, midi);
+                    for (int i = 0; i < 512; ++i)
+                    {
+                        diff = juce::jmax (diff, std::abs (buffer.getSample (0, i) - buffer.getSample (1, i)));
+                        level = juce::jmax (level, std::abs (buffer.getSample (0, i)));
+                    }
+                }
+                return level > 0.05f ? diff / level : -1.0f;
+            };
+            const float wide = difference (1.0f, 7), narrow = difference (0.0f, 7), single = difference (1.0f, 1);
+            check (wide > 0.3f && near (narrow, 0.0f, 1.0e-6f) && near (single, 0.0f, 1.0e-6f), "unison width spreads the copies, a single copy stays centred");
+        }
 
         base.oscA.level = 0.5f;
         const auto layered = render (base);

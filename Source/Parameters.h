@@ -116,6 +116,7 @@ inline constexpr auto oscADetune = "oscADetune";
 inline constexpr auto oscAPitch = "oscAPitch";
 inline constexpr auto oscAFine = "oscAFine";
 inline constexpr auto oscALevel = "oscALevel";
+inline constexpr auto oscAWidth = "oscAWidth";
 inline constexpr auto oscBTable = "oscBTable";
 inline constexpr auto oscBPos = "oscBPosition";
 inline constexpr auto oscBUnison = "oscBUnison";
@@ -123,6 +124,7 @@ inline constexpr auto oscBDetune = "oscBDetune";
 inline constexpr auto oscBPitch = "oscBPitch";
 inline constexpr auto oscBFine = "oscBFine";
 inline constexpr auto oscBLevel = "oscBLevel";
+inline constexpr auto oscBWidth = "oscBWidth";
 inline constexpr auto subLevel = "subLevel";
 inline constexpr auto subOctave = "subOctave";
 inline constexpr auto subShape = "subShape";
@@ -234,6 +236,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::oscAPitch, "Osc A Pitch", Range (-24.0f, 24.0f, 1.0f), 0.0f, "st");
     add (id::oscAFine, "Osc A Fine", Range (-100.0f, 100.0f), 0.0f, "ct");
     add (id::oscALevel, "Osc A Level", Range (0.0f, 1.0f), 0.0f);
+    add (id::oscAWidth, "Osc A Width", Range (0.0f, 1.0f), 0.7f);
 
     addChoice (id::oscBTable, "Osc B Table", tableNames, 1);
     add (id::oscBPos, "Osc B Position", Range (0.0f, 1.0f), 0.4f);
@@ -242,6 +245,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::oscBPitch, "Osc B Pitch", Range (-24.0f, 24.0f, 1.0f), 0.0f, "st");
     add (id::oscBFine, "Osc B Fine", Range (-100.0f, 100.0f), 0.0f, "ct");
     add (id::oscBLevel, "Osc B Level", Range (0.0f, 1.0f), 0.0f);
+    add (id::oscBWidth, "Osc B Width", Range (0.0f, 1.0f), 0.7f);
 
     add (id::subLevel, "Sub Level", Range (0.0f, 1.0f), 0.0f);
     addChoice (id::subOctave, "Sub Octave", { "-1 OCT", "-2 OCT" }, 0);

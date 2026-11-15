@@ -76,9 +76,9 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
 
     p.engineLevel = value (id::engineLevel);
     p.oscA = { juce::roundToInt (value (id::oscATable)), value (id::oscAPos), juce::roundToInt (value (id::oscAUnison)),
-               value (id::oscADetune), value (id::oscAPitch), value (id::oscAFine), value (id::oscALevel) };
+               value (id::oscADetune), value (id::oscAPitch), value (id::oscAFine), value (id::oscALevel), value (id::oscAWidth) };
     p.oscB = { juce::roundToInt (value (id::oscBTable)), value (id::oscBPos), juce::roundToInt (value (id::oscBUnison)),
-               value (id::oscBDetune), value (id::oscBPitch), value (id::oscBFine), value (id::oscBLevel) };
+               value (id::oscBDetune), value (id::oscBPitch), value (id::oscBFine), value (id::oscBLevel), value (id::oscBWidth) };
     p.subLevel = value (id::subLevel);
     p.subOctave = juce::roundToInt (value (id::subOctave)) + 1;
     p.subShape = value (id::subShape);
