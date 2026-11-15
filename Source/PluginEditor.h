@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "SampleDisplay.h"
+#include "StepEditor.h"
 #include "WavetableEditor.h"
 
 namespace amv
@@ -277,8 +278,9 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
-    std::array<juce::TextButton, 7> tabs;
-    static constexpr std::array<int, 7> tabPages { 0, 1, 5, 6, 2, 3, 4 }; // the page each tab shows; WAVE and SAMPLE were added last
+    std::array<juce::TextButton, 8> tabs;
+    static constexpr std::array<int, 8> tabPages { 0, 1, 5, 6, 7, 2, 3, 4 }; // the page each tab shows; WAVE, SAMPLE and SEQ were added last
+    static constexpr int seqPage = 7;
     int currentPage = 0, buildingPage = 0;
 
     juce::ComboBox presetBox;
@@ -306,6 +308,11 @@ private:
     void updateSampleInfo();
     void setParameterValue (const char* paramId, float value);
     bool hasSourceBar() const noexcept { return currentPage < 4 || currentPage == 6; }
+
+    // SEQ page.
+    enum SeqTool { seqOneBar, seqTwoBars, seqAccents, seqRandom, seqShiftLeft, seqShiftRight, seqReverse, seqClear, numSeqTools };
+    StepEditor stepEditor { processor };
+    std::array<juce::TextButton, numSeqTools> seqButtons;
 
     // Modulation by drag and drop.
     std::vector<Assignment> assignmentsFor (int dest) const;

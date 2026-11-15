@@ -246,7 +246,7 @@ private:
             for (;;)
             {
                 const double offset = ((double) grid.nextStep * grid.stepBeats - grid.ppq) * grid.samplesPerBeat;
-                const int pos = juce::jmax (from, (int) std::lround (offset));
+                const int pos = juce::jmax (from, (int) std::floor (offset + 1.0e-6)); // rounding up could push a step past the block and lose it
                 if (pos >= to)
                     break;
 

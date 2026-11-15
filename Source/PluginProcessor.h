@@ -65,6 +65,16 @@ public:
     /** The points of the drawn shape of an LFO. Message thread only. */
     const std::vector<amv::LfoPoint>& getLfoPoints (int lfo) const noexcept { return activeLfoShape[(size_t) lfo].load()->getPoints(); }
 
+    /** Sets the pattern of the step sequencer. With `save` off the project state is not updated
+        yet; call it again with `save` on when the edit is finished. Message thread only. */
+    void setSeqPattern (const amv::SeqPattern&, bool save);
+
+    /** The pattern of the step sequencer. Message thread only. */
+    const amv::SeqPattern& getSeqPattern() const noexcept { return *activeSeqPattern.load(); }
+
+    /** The step the sequencer played last, or -1 when it is silent, for the display. */
+    std::atomic<int> seqStep { -1 };
+
     /** Where each LFO is in its cycle, 0..1, for the display. */
     std::array<std::atomic<float>, amv::mod::numLfos> lfoPhases {};
 
@@ -98,9 +108,10 @@ private:
 
     amv::SynthEngine engine;
     amv::Arpeggiator arp;
+    amv::StepSequencer sequencer;
     amv::FxChain fx;
     juce::AudioBuffer<float> stereo;
-    juce::MidiBuffer arpMidi;
+    juce::MidiBuffer arpMidi, seqMidi;
     juce::SmoothedValue<float> outputGain;
     int currentPreset = 0;
 
@@ -137,6 +148,16 @@ private:
         juce::uint32 retiredAt = 0;
     };
     std::vector<StoredShape> lfoShapeStore;
+
+    // The sequencer pattern, handed over the same way. There is always one.
+    void restoreSeqPattern();
+    std::atomic<const amv::SeqPattern*> activeSeqPattern { nullptr };
+    struct StoredPattern
+    {
+        std::unique_ptr<amv::SeqPattern> pattern;
+        juce::uint32 retiredAt = 0;
+    };
+    std::vector<StoredPattern> seqPatternStore;
 
     // The numbered modulation parameters are looked up once, their names are built at run time.
     struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; std::atomic<float>* mode; };

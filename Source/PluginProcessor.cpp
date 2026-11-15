@@ -18,6 +18,7 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
 
     for (int i = 0; i < mod::numLfos; ++i)
         setLfoShape (i, {}, false);
+    setSeqPattern ({}, false);
 
     const auto& knobIds = getEngineKnobIds();
     for (size_t m = 0; m < knobIds.size(); ++m)
@@ -32,9 +33,11 @@ void AMVSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 {
     engine.prepare (sampleRate, samplesPerBlock);
     arp.prepare (sampleRate);
+    sequencer.prepare (sampleRate);
     fx.prepare (sampleRate, samplesPerBlock);
     stereo.setSize (2, juce::jmax (1, samplesPerBlock));
     arpMidi.ensureSize (4096);
+    seqMidi.ensureSize (4096);
     engine.setParams (readParams());
     outputGain.reset (sampleRate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
@@ -213,7 +216,21 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
                 transport.barBeats = 4.0 * sig->numerator / juce::jmax (1, sig->denominator);
         }
 
-    arp.process (midi, arpMidi, buffer.getNumSamples(), ap, transport);
+    // The sequencer comes first and takes the place of the arpeggiator while it is on.
+    amv::SeqParams sp;
+    sp.on = value (amv::id::seqOn) > 0.5f;
+    sp.rate = juce::roundToInt (value (amv::id::seqRate));
+    sp.length = juce::roundToInt (value (amv::id::seqSteps));
+    sp.gate = value (amv::id::seqGate) * 0.01f;
+    sp.swing = value (amv::id::seqSwing) * 0.01f;
+    sp.freeCycle = value (amv::id::seqFreeCycle) > 0.5f;
+    sp.latch = value (amv::id::seqLatch) > 0.5f;
+    sp.pattern = activeSeqPattern.load (std::memory_order_acquire);
+    ap.on = ap.on && ! sp.on;
+
+    sequencer.process (midi, seqMidi, buffer.getNumSamples(), sp, transport);
+    seqStep.store (sequencer.getCurrentStep(), std::memory_order_relaxed);
+    arp.process (seqMidi, arpMidi, buffer.getNumSamples(), ap, transport);
 
     // The voices render in mono, the effects work in stereo.
     const int numSamples = buffer.getNumSamples();
@@ -356,6 +373,7 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
             restoreUserWavetables();
             restoreSample();
             restoreLfoShapes();
+            restoreSeqPattern();
         }
 }
 
@@ -606,6 +624,31 @@ void AMVSynthAudioProcessor::restoreLfoShapes()
         setLfoShape (lfo, amv::LfoShape::pointsFromString (apvts.state.getProperty ("lfoShape" + juce::String (lfo + 1)).toString()), false);
 }
 
+void AMVSynthAudioProcessor::setSeqPattern (const amv::SeqPattern& newPattern, bool save)
+{
+    auto pattern = std::make_unique<amv::SeqPattern> (newPattern);
+    const auto now = juce::jmax<juce::uint32> (1, juce::Time::getMillisecondCounter());
+    const auto* previous = activeSeqPattern.exchange (pattern.get(), std::memory_order_acq_rel);
+
+    for (auto& stored : seqPatternStore)
+        if (stored.pattern.get() == previous && previous != nullptr)
+            stored.retiredAt = now;
+    seqPatternStore.push_back ({ std::move (pattern), 0 });
+
+    seqPatternStore.erase (std::remove_if (seqPatternStore.begin(), seqPatternStore.end(),
+                                           [now] (const StoredPattern& stored) { return stored.retiredAt != 0 && now - stored.retiredAt > 500; }),
+                           seqPatternStore.end());
+
+    if (save)
+        apvts.state.setProperty ("seqPattern", newPattern.toString(), nullptr);
+}
+
+void AMVSynthAudioProcessor::restoreSeqPattern()
+{
+    // A state without a pattern gets the default one.
+    setSeqPattern (amv::SeqPattern::fromString (apvts.state.getProperty ("seqPattern").toString()), false);
+}
+
 bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)
 {
     const auto xml = apvts.copyState().createXml();
@@ -632,6 +675,7 @@ bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
     restoreUserWavetables();
     restoreSample();
     restoreLfoShapes();
+    restoreSeqPattern();
 
     for (const auto& [param, normalised] : kept)
         param->setValueNotifyingHost (normalised);

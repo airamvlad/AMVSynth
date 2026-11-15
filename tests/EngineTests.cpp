@@ -2,6 +2,7 @@
 #include "Arpeggiator.h"
 #include "Effects.h"
 #include "Presets.h"
+#include "Sequencer.h"
 #include "SynthEngine.h"
 
 #include <cstdio>
@@ -348,6 +349,150 @@ int main()
 
         check (velocities.size() > 17 && velocities[14] > 0.9f && velocities[15] < 0.5f && velocities[16] > 0.9f && velocities[17] < 0.5f,
                "arp without polymeter restarts on the bar");
+    }
+
+    // Step sequencer: 7 steps in sixteenths at 120 bpm, so a step is 6000 samples.
+    {
+        struct Event { int time; int note; float velocity; bool on; };
+        const int block = 512;
+
+        const auto run = [&] (const SeqPattern& pattern, SeqParams sp, int blocks, int releaseBlock, bool playing, int pressAt = 0)
+        {
+            StepSequencer seq;
+            seq.prepare (48000.0);
+            sp.on = true;
+            sp.pattern = &pattern;
+            std::vector<Event> events;
+
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer in, out;
+                if (b == 0)
+                    in.addEvent (juce::MidiMessage::noteOn (1, 62, 1.0f), pressAt);
+                if (b == releaseBlock)
+                    in.addEvent (juce::MidiMessage::noteOff (1, 62), 0);
+
+                TransportInfo t;
+                t.playing = playing;
+                t.bpm = 120.0;
+                t.ppq = (double) (b * block) / 24000.0;
+                seq.process (in, out, block, sp, t);
+
+                for (const auto meta : out)
+                {
+                    const auto m = meta.getMessage();
+                    if (m.isNoteOn() || m.isNoteOff())
+                        events.push_back ({ b * block + meta.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), m.isNoteOn() });
+                }
+            }
+
+            return events;
+        };
+
+        const auto onsOf = [] (const std::vector<Event>& events)
+        {
+            std::vector<Event> ons;
+            for (const auto& e : events)
+                if (e.on)
+                    ons.push_back (e);
+            return ons;
+        };
+
+        SeqPattern pattern;
+        const int notes[] { 0, 3, 5, 7, 0, -2, 12 };
+        for (size_t i = 0; i < 7; ++i)
+        {
+            pattern.steps[i].note = notes[i];
+            pattern.steps[i].velocity = i == 0 ? 1.0f : 0.5f;
+            pattern.steps[i].gate = 0.5f;
+        }
+        pattern.steps[2].gate = 0.0f;  // a rest
+        pattern.steps[4].slide = true; // slides into step 5
+
+        SeqParams sp;
+        sp.length = 7;
+        sp.rate = 1;
+
+        const auto events = run (pattern, sp, 200, 160, true);
+        const auto ons = onsOf (events);
+
+        // Twelve note ons in two passes: steps 0 1 3 4 5 6, twice.
+        const int expectedStep[] { 0, 1, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13 };
+        bool timing = ons.size() >= 12, pitches = timing, velocities = timing;
+        for (size_t i = 0; timing && i < 12; ++i)
+        {
+            timing = timing && std::abs (ons[i].time - expectedStep[i] * 6000) <= 1;
+            pitches = pitches && ons[i].note == 62 + notes[expectedStep[i] % 7];
+            velocities = velocities && (expectedStep[i] % 7 == 0 ? ons[i].velocity > 0.95f : std::abs (ons[i].velocity - 0.5f) < 0.02f);
+        }
+
+        check (timing, "sequencer steps land on the grid and a rest stays silent");
+        check (pitches, "sequencer notes are the held key plus the step");
+        check (velocities, "sequencer steps have their own velocity");
+
+        int offs = 0, slideOff = -1, plainOff = -1;
+        for (const auto& e : events)
+        {
+            if (! e.on)
+                ++offs;
+            if (! e.on && e.note == 62 && slideOff < 0 && e.time > 4 * 6000)
+                slideOff = e.time;
+            if (! e.on && e.note == 65 && plainOff < 0)
+                plainOff = e.time;
+        }
+
+        check (std::abs (plainOff - 9000) <= 1, "a step lasts as long as its gate");
+        check (slideOff > 5 * 6000 && slideOff < 5 * 6000 + 1000, "a slide holds the note into the next step");
+        check (offs == (int) ons.size() && ons.back().time < 160 * block, "sequencer stops on release and every note gets a note off");
+
+        // Latch keeps it running after the key is released.
+        SeqParams latched = sp;
+        latched.latch = true;
+        check (onsOf (run (pattern, latched, 200, 20, true)).back().time > 180 * block, "latch keeps the sequence playing after release");
+
+        // Two steps with the same note joined by a slide are one long note.
+        SeqPattern tied;
+        tied.steps[0].slide = true;
+        const auto tiedEvents = run (tied, sp, 40, 39, true);
+        check (tiedEvents.size() >= 3 && tiedEvents[0].on && ! tiedEvents[1].on && std::abs (tiedEvents[1].time - 9000) <= 1 && tiedEvents[2].time == 12000,
+               "a slide into the same note is a tie");
+
+        // Swing makes every second step late.
+        SeqParams swung = sp;
+        swung.swing = 0.5f;
+        const auto swungOns = onsOf (run (SeqPattern(), swung, 60, 59, true));
+        check (swungOns.size() > 3 && swungOns[0].time == 0 && std::abs (swungOns[1].time - 7500) <= 1 && std::abs (swungOns[2].time - 12000) <= 1
+                   && std::abs (swungOns[3].time - 19500) <= 1,
+               "swing delays every second step");
+
+        // With the host stopped the pattern starts on the key press.
+        const auto freeOns = onsOf (run (pattern, sp, 60, 59, false, 100));
+        check (freeOns.size() > 2 && freeOns[0].time == 100 && freeOns[0].note == 62 && std::abs (freeOns[1].time - 6100) <= 1,
+               "with the host stopped the sequence starts on the key press");
+
+        // The bar-locked mode starts the pattern again on every 4/4 bar.
+        SeqParams locked = sp;
+        locked.freeCycle = false;
+        const auto lockedOns = onsOf (run (pattern, locked, 240, 239, true));
+        bool restarts = false;
+        for (const auto& e : lockedOns)
+            restarts = restarts || (std::abs (e.time - 16 * 6000) <= 1 && e.note == 62 && e.velocity > 0.95f);
+        check (restarts, "sequencer without free cycle restarts on the bar");
+
+        const auto copy = SeqPattern::fromString (pattern.toString());
+        bool same = true;
+        for (size_t i = 0; i < copy.steps.size(); ++i)
+            same = same && copy.steps[i].note == pattern.steps[i].note && copy.steps[i].slide == pattern.steps[i].slide
+                   && std::abs (copy.steps[i].gate - pattern.steps[i].gate) < 0.002f && std::abs (copy.steps[i].velocity - pattern.steps[i].velocity) < 0.002f;
+        check (same, "a sequencer pattern survives being saved as text");
+
+        // Switched off, it lets the notes through.
+        StepSequencer off;
+        off.prepare (48000.0);
+        juce::MidiBuffer in, out;
+        in.addEvent (juce::MidiMessage::noteOn (1, 60, 0.7f), 5);
+        off.process (in, out, block, SeqParams(), TransportInfo());
+        check (out.getNumEvents() == 1, "sequencer switched off passes the notes through");
     }
 
     // Effects

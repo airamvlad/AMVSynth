@@ -16,6 +16,11 @@ What it does:
 - Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
 - Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
+- Odd-meter step sequencer on the SEQ page: up to 32 steps, each with its own note (two octaves around the held key, which transposes the pattern), velocity, gate and slide
+  - The grid is grouped like the chosen meter (5/8, 7/8, 9/8, 11/8 or 4/4), and 1 BAR and 2 BARS set the length to it; any length from 1 to 32 steps works
+  - A slide glides into the next step in Mono Legato, and ties two steps with the same note into one long note
+  - Swing, a gate scale, latch, and a free cycle mode that lets an odd pattern run over a 4/4 bar, or restart on every bar
+  - Pattern tools: accents from the meter, random notes from the chosen scale, shift, reverse and clear. The pattern is saved with the project and in preset files
 - Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Pythagorean tuning (all twelve keys from pure fifths on the chosen root) in the same scale list
@@ -73,6 +78,7 @@ The results are in `build/AMVSynth_artefacts/Release`.
 - `Source/Parameters.h`: all plugin parameters
 - `Source/Tuning.h`: scales and microtonal key mapping
 - `Source/Arpeggiator.h`: the odd-meter arpeggiator
+- `Source/Sequencer.h`: the step sequencer; `Source/StepEditor.*` is its grid
 - `Source/Effects.h`: the effect chain
 - `Source/Wavetables.h`: the wavetables, built from harmonic spectra at startup
 - `Source/WavetableEditor.h`, `.cpp`: the WAVE page

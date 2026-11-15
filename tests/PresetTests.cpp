@@ -206,6 +206,52 @@ int main()
         file.deleteFile();
     }
 
+    // The sequencer pattern is saved with the project, and the sequencer plays it.
+    {
+        const auto check = [&failures] (bool ok, const char* what)
+        {
+            std::printf ("%s  %s\n", ok ? "ok  " : "FAIL", what);
+            failures += ok ? 0 : 1;
+        };
+
+        std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());
+        auto* first = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        amv::SeqPattern pattern;
+        pattern.steps[1].note = 7;
+        pattern.steps[2].gate = 0.0f;
+        pattern.steps[3].slide = true;
+        pattern.steps[3].velocity = 0.35f;
+        first->setSeqPattern (pattern, true);
+        first->apvts.getParameter (amv::id::seqOn)->setValueNotifyingHost (1.0f);
+
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
+        other->setStateInformation (state.getData(), (int) state.getSize());
+        auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
+        const auto& restored = second->getSeqPattern();
+        check (restored.steps[1].note == 7 && restored.steps[2].gate == 0.0f && restored.steps[3].slide && std::abs (restored.steps[3].velocity - 0.35f) < 0.002f
+                   && restored.steps[0].note == 0 && ! restored.steps[0].slide,
+               "the sequencer pattern is saved with the project");
+
+        // A held key makes sound and moves the step that is shown.
+        other->setPlayConfigDetails (0, 2, 48000.0, 512);
+        other->prepareToPlay (48000.0, 512);
+        float peak = 0.0f;
+        int lastStep = -1;
+        for (int b = 0; b < 60; ++b)
+        {
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 0);
+            other->processBlock (buffer, midi);
+            peak = juce::jmax (peak, buffer.getMagnitude (0, 512));
+            lastStep = juce::jmax (lastStep, second->seqStep.load());
+        }
+        check (peak > 0.01f && lastStep >= 3 && lastStep < 7, "the sequencer plays from a held key and reports its step");
+    }
+
     // A drawn LFO shape is saved with the project, and a modulated effect is heard.
     {
         std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());

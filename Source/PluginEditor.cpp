@@ -391,6 +391,62 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         updateSampleInfo();
     }
 
+    // SEQ page: the step grid over three rows, its settings and tools below.
+    buildingPage = seqPage;
+    {
+        addSection ("ODD-METER STEP SEQUENCER", true, 0, 1.0f).display = &stepEditor;
+        addChildComponent (stepEditor);
+
+        auto& s = addSection ("SEQUENCER", true, 3, 5.5f);
+        s.column.push_back (&makeToggle (id::seqOn, "SEQ ON", true)->button);
+        s.column.push_back (&makeChoice (id::seqMeter, true)->box);
+        s.column.push_back (&makeToggle (id::seqLatch, "LATCH", true)->button);
+        s.column.push_back (&makeChoice (id::seqRate, true)->box);
+        s.column.push_back (&makeToggle (id::seqFreeCycle, "FREE CYCLE", true)->button);
+        s.columnsInColumn = 2;
+        s.columnWidth = 140;
+        s.knobs = makeKnobs (true, { { id::seqSteps, "STEPS" }, { id::seqGate, "GATE" }, { id::seqSwing, "SWING" } });
+
+        const char* names[numSeqTools] { "1 BAR", "2 BARS", "ACCENTS", "RANDOM", "SHIFT <", "SHIFT >", "REVERSE", "CLEAR" };
+        const char* tips[numSeqTools] { "Set STEPS to one bar of the chosen meter.",
+                                        "Set STEPS to two bars of the chosen meter.",
+                                        "Set the velocities from the meter: the first step of every group is loud.",
+                                        "Fill the pattern with random notes from the scale on the SYNTH page.",
+                                        "Move the pattern one step to the left.",
+                                        "Move the pattern one step to the right.",
+                                        "Play the pattern backwards.",
+                                        "Put every step back to the key, without slides." };
+        for (int i = 0; i < numSeqTools; ++i)
+        {
+            auto& button = seqButtons[(size_t) i];
+            button.setButtonText (names[i]);
+            button.setTooltip (tips[i]);
+            button.setColour (juce::TextButton::buttonColourId, colour::knob);
+            button.setColour (juce::TextButton::textColourOffId, colour::text);
+            button.onClick = [this, i]
+            {
+                switch (i)
+                {
+                    case seqOneBar:     stepEditor.fitToMeter (1); break;
+                    case seqTwoBars:    stepEditor.fitToMeter (2); break;
+                    case seqAccents:    stepEditor.accentsFromMeter(); break;
+                    case seqRandom:     stepEditor.randomise(); break;
+                    case seqShiftLeft:  stepEditor.shift (-1); break;
+                    case seqShiftRight: stepEditor.shift (1); break;
+                    case seqReverse:    stepEditor.reverse(); break;
+                    case seqClear:      stepEditor.clear(); break;
+                    default: break;
+                }
+            };
+            addChildComponent (button);
+        }
+
+        auto& tools = addSection ("PATTERN TOOLS", true, 3, 4.5f);
+        for (auto& button : seqButtons)
+            tools.column.push_back (&button);
+        tools.columnsInColumn = 4;
+    }
+
     // MOD page: four LFOs with a shape editor, a free envelope, the modulation matrix and the macros.
     buildingPage = 2;
     {
@@ -508,7 +564,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
     addChildComponent (waveEditor);
 
-    const char* tabNames[] { "SYNTH", "OSC", "WAVE", "SAMPLE", "MOD", "FX", "SETUP" };
+    const char* tabNames[] { "SYNTH", "OSC", "WAVE", "SAMPLE", "SEQ", "MOD", "FX", "SETUP" };
     for (size_t i = 0; i < tabs.size(); ++i)
     {
         auto& tab = tabs[i];
@@ -712,6 +768,8 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
         button.setVisible (false);
     for (auto& button : lfoSelect)
         button.setVisible (false);
+    for (auto& button : seqButtons)
+        button.setVisible (false);
     for (auto& s : sections)
         if (s.display != nullptr)
             s.display->setVisible (false);
@@ -773,6 +831,7 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     filterEnvDisplay.refresh();
     updateModulationDisplay();
     sampleDisplay.refresh();
+    stepEditor.refresh();
     updateSampleInfo();
 
     if (meterChanged && levelMeter.isVisible())
@@ -2251,7 +2310,7 @@ void AMVSynthAudioProcessorEditor::resized()
     headerArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
-        static constexpr int widths[] { 56, 46, 52, 66, 46, 40, 56 };
+        static constexpr int widths[] { 56, 46, 52, 66, 44, 46, 40, 56 };
         tabs[i].setBounds (headerArea.removeFromRight (widths[i]));
         headerArea.removeFromRight (3);
     }
@@ -2294,9 +2353,15 @@ void AMVSynthAudioProcessorEditor::resized()
     const int layoutRows = juce::jmax (numRows, 4);
     const int rowHeight = (area.getHeight() - gap * (layoutRows - 1)) / layoutRows;
 
+    // On the SEQ page the step grid is three rows tall.
+    const bool tallFirstRow = currentPage == seqPage;
+
     for (int row = 0; row < numRows; ++row)
     {
-        auto rowArea = area.removeFromTop (rowHeight);
+        if (tallFirstRow && (row == 1 || row == 2))
+            continue;
+
+        auto rowArea = area.removeFromTop (tallFirstRow && row == 0 ? rowHeight * 3 + gap * 2 : rowHeight);
         area.removeFromTop (gap);
 
         float totalWeight = 0.0f;
