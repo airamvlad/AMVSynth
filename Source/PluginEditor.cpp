@@ -7,6 +7,7 @@ constexpr int keyboardHeight = 64;
 constexpr int margin = 12;
 constexpr int gap = 10;
 constexpr int titleHeight = 28;
+constexpr int sourceBarHeight = 30;
 
 void drawKilim (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour, int count)
 {
@@ -78,13 +79,14 @@ void LookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& butto
 void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
                                     float startAngle, float endAngle, juce::Slider& slider)
 {
-    const auto area = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (3.0f);
+    // The outermost ring is left free: knobs that can be modulated draw their modulation there.
+    const auto area = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (2.0f);
     const float size = juce::jmin (area.getWidth(), area.getHeight());
     const auto centre = area.getCentre();
-    const float radius = size * 0.5f - 2.0f;
+    const float radius = size * 0.5f - 6.5f;
     const float angle = startAngle + sliderPos * (endAngle - startAngle);
     const auto accent = slider.findColour (juce::Slider::rotarySliderFillColourId);
-    const juce::PathStrokeType stroke (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    const juce::PathStrokeType stroke (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
 
     juce::Path trackArc;
     trackArc.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, endAngle, true);
@@ -93,15 +95,20 @@ void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, 
 
     juce::Path valueArc;
     valueArc.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, angle, true);
+    g.setColour (accent.withAlpha (0.25f));
+    g.strokePath (valueArc, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)); // soft glow
     g.setColour (accent);
     g.strokePath (valueArc, stroke);
 
-    const float inner = radius - 6.0f;
-    g.setColour (colour::knob);
-    g.fillEllipse (centre.x - inner, centre.y - inner, inner * 2.0f, inner * 2.0f);
+    const float body = radius - 5.0f;
+    g.setGradientFill (juce::ColourGradient (colour::knob.brighter (0.22f), centre.x, centre.y - body,
+                                             colour::knob.darker (0.35f), centre.x, centre.y + body, false));
+    g.fillEllipse (centre.x - body, centre.y - body, body * 2.0f, body * 2.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.07f));
+    g.drawEllipse (centre.x - body + 0.5f, centre.y - body + 0.5f, body * 2.0f - 1.0f, body * 2.0f - 1.0f, 1.0f);
 
     juce::Path pointer;
-    pointer.addRoundedRectangle (-1.25f, -inner + 2.0f, 2.5f, inner * 0.55f, 1.0f);
+    pointer.addRoundedRectangle (-1.1f, -body + 2.5f, 2.2f, body * 0.5f, 1.1f);
     g.setColour (colour::text);
     g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre.x, centre.y));
 }
@@ -169,14 +176,24 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         tuneBox.setTextValueSuffix (" Hz");
         addChildComponent (tuneBox);
 
-        auto& s = addSection ("TUNING A4 / MPE", false, 1, 3.4f);
+        // Tuning and MPE are set once per project, so they live on the SETUP page.
+        buildingPage = 4;
+        auto& s = addSection ("TUNING A4 / MPE", false, 0, 3.0f);
         s.columnWidth = 132;
         s.column.push_back (&tuneBox);
         s.column.push_back (&makeToggle (id::mpe, "MPE", false)->button);
         s.knobs = makeKnobs (false, { { id::mpeBend, "MPE BEND" } });
+
+        helpDisplay.lines = { "Drag a source from the MOD SOURCES row onto a knob to modulate it.",
+                              "Shift-drag a modulated knob up or down to set how far it moves.",
+                              "Right-click a knob to add, invert or remove a modulation.",
+                              "The MOD page lists every modulation and has the LFO and macro settings." };
+        addSection ("MODULATION", false, 0, 7.0f).display = &helpDisplay;
+        addChildComponent (helpDisplay);
+        buildingPage = 0;
     }
     {
-        auto& s = addSection ("ORNAMENTS", true, 1, 7.0f);
+        auto& s = addSection ("ORNAMENTS", true, 1, 8.0f);
         s.columnsInColumn = 2;
         s.column.push_back (&makeToggle (id::ornGrace, "GRACE", true)->button);
         s.column.push_back (&makeToggle (id::ornMordent, "MORDENT", true)->button);
@@ -201,8 +218,8 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
     // Row 3: filter, envelopes, output.
     {
-        auto& s = addSection ("FILTER", false, 3, 4.0f);
-        s.columnWidth = 118;
+        auto& s = addSection ("FILTER", false, 3, 4.6f);
+        s.columnWidth = 106;
         s.column.push_back (&makeChoice (id::filterType, false)->box);
         s.knobs = makeKnobs (false, { { id::cutoff, "CUTOFF" }, { id::resonance, "RES" }, { id::filterEnv, "ENV" } });
     }
@@ -212,15 +229,15 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     filterEnvDisplay.setParameters (processor.apvts, id::fltA, id::fltD, id::fltS, id::fltR);
     // The graph and the knobs show the same four values; either one can be used.
     {
-        auto& s = addSection ("AMP ENV", false, 3, 5.0f);
+        auto& s = addSection ("AMP ENV", false, 3, 4.9f);
         s.display = &ampEnvDisplay;
-        s.displayShare = 0.46f;
+        s.displayShare = 0.38f;
         s.knobs = makeKnobs (false, { { id::ampA, "A" }, { id::ampD, "D" }, { id::ampS, "S" }, { id::ampR, "R" } });
     }
     {
-        auto& s = addSection ("FILTER ENV", false, 3, 5.0f);
+        auto& s = addSection ("FILTER ENV", false, 3, 4.9f);
         s.display = &filterEnvDisplay;
-        s.displayShare = 0.46f;
+        s.displayShare = 0.38f;
         s.knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
     }
     addChildComponent (ampEnvDisplay);
@@ -268,19 +285,25 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     buildingPage = 2;
     for (int i = 0; i < mod::numLfos; ++i)
     {
-        auto& s = addSection ("LFO " + juce::String (i + 1), false, 0, 3.0f);
+        auto& s = addSection ("LFO " + juce::String (i + 1), false, 0, 4.0f);
         s.columnWidth = 130;
+        lfoDisplays[(size_t) i].source = mod::srcLfo1 + i;
+        s.display = &lfoDisplays[(size_t) i];
+        s.displayShare = 0.56f;
+        addChildComponent (lfoDisplays[(size_t) i]);
         s.column.push_back (&makeChoice (id::lfo (i, "Shape"), false)->box);
         s.column.push_back (&makeToggle (id::lfo (i, "Sync"), "TEMPO SYNC", false)->button);
         s.column.push_back (&makeChoice (id::lfo (i, "Division"), false)->box);
         s.knobs = makeKnobs (false, { { id::lfo (i, "Rate"), "RATE" } });
     }
-    addSection ("MACROS", false, 0, 5.0f).knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" },
+    addSection ("MACROS", false, 0, 4.4f).knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" },
                                                                       { id::macro (2), "MACRO 3" }, { id::macro (3), "MACRO 4" } });
     for (int i = 0; i < mod::numSlots; ++i)
     {
-        auto& s = addSection ("MOD " + juce::String (i + 1), false, 1 + i / 3, 1.0f);
-        s.columnWidth = 175;
+        auto& s = addSection ("MOD " + juce::String (i + 1), false, 1 + i / 4, 1.0f);
+        s.columnWidth = 150;
+        slotParams[(size_t) i] = { processor.apvts.getParameter (id::slot (i, "Source")), processor.apvts.getParameter (id::slot (i, "Dest")),
+                                   processor.apvts.getParameter (id::slot (i, "Amount")) };
         s.column.push_back (&makeChoice (id::slot (i, "Source"), false)->box);
         s.column.push_back (&makeChoice (id::slot (i, "Dest"), false)->box);
         s.knobs = makeKnobs (false, { { id::slot (i, "Amount"), "AMOUNT" } });
@@ -330,7 +353,15 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
     buildingPage = 0;
 
-    const char* tabNames[] { "SYNTH", "OSC", "MOD", "FX" };
+    sourceBar.owner = this;
+    addAndMakeVisible (sourceBar);
+    statusLabel.setFont (juce::FontOptions (11.5f));
+    statusLabel.setColour (juce::Label::textColourId, colour::text);
+    statusLabel.setJustificationType (juce::Justification::centredRight);
+    statusLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (statusLabel);
+
+    const char* tabNames[] { "SYNTH", "OSC", "MOD", "FX", "SETUP" };
     for (size_t i = 0; i < tabs.size(); ++i)
     {
         auto& tab = tabs[i];
@@ -405,7 +436,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (id::model)->load()));
     updateVisibility();
-    startTimerHz (20);
+    startTimerHz (30);
 
     setResizable (true, true);
     getConstrainer()->setFixedAspectRatio (1040.0 / 840.0);
@@ -434,6 +465,9 @@ std::vector<AMVSynthAudioProcessorEditor::Knob*> AMVSynthAudioProcessorEditor::m
         knob->label.setJustificationType (juce::Justification::centred);
         knob->label.setFont (juce::FontOptions (11.0f));
         knob->attachment = std::make_unique<APVTS::SliderAttachment> (processor.apvts, paramId, knob->slider);
+        knob->slider.owner = this;
+        knob->slider.param = processor.apvts.getParameter (paramId);
+        knob->slider.dest = amv::modDestFor (paramId);
 
         addChildComponent (knob->slider);
         addChildComponent (knob->label);
@@ -550,6 +584,8 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
     for (auto& c : choices)
         c->box.setVisible (false);
     tuneBox.setVisible (false);
+    sourceBar.setVisible (currentPage != 4);
+    statusLabel.setVisible (currentPage != 4);
     for (auto& button : importButtons)
         button.setVisible (false);
     for (auto& s : sections)
@@ -597,13 +633,13 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     for (size_t ch = 0; ch < 2; ++ch)
     {
         const float peak = processor.outputPeak[ch].exchange (0.0f, std::memory_order_relaxed);
-        const float next = juce::jmax (peak, levelMeter.level[ch] * 0.8f);
+        const float next = juce::jmax (peak, levelMeter.level[ch] * 0.86f);
         meterChanged = meterChanged || std::abs (next - levelMeter.level[ch]) > 1.0e-4f;
         levelMeter.level[ch] = next < 1.0e-4f ? 0.0f : next;
 
         if (peak >= 0.99f)
         {
-            levelMeter.clipHold = 20; // one second at the timer rate
+            levelMeter.clipHold = 30; // one second at the timer rate
             meterChanged = true;
         }
     }
@@ -611,6 +647,7 @@ void AMVSynthAudioProcessorEditor::timerCallback()
         meterChanged = true;
     ampEnvDisplay.refresh();
     filterEnvDisplay.refresh();
+    updateModulationDisplay();
 
     if (meterChanged && levelMeter.isVisible())
         levelMeter.repaint();
@@ -963,6 +1000,512 @@ void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseDoubleClick (const juce
     refresh();
 }
 
+//==============================================================================
+// Modulation by drag and drop
+
+namespace
+{
+const char* const sourceTag = "mod:";
+const char* const chipNames[amv::mod::numSources] { "", "LFO 1", "LFO 2", "ENV", "VEL", "WHEEL", "M1", "M2", "M3", "M4", "PRESS", "TIMBRE" };
+
+/** LFOs and timbre swing both ways around the value of the knob; the others only add. */
+bool isBipolar (int source)
+{
+    return source == amv::mod::srcLfo1 || source == amv::mod::srcLfo2 || source == amv::mod::srcTimbre;
+}
+
+void setParameter (juce::RangedAudioParameter* param, float realValue)
+{
+    param->beginChangeGesture();
+    param->setValueNotifyingHost (param->convertTo0to1 (realValue));
+    param->endChangeGesture();
+}
+
+int realValue (const juce::RangedAudioParameter* param)
+{
+    return juce::roundToInt (param->convertFrom0to1 (param->getValue()));
+}
+} // namespace
+
+float AMVSynthAudioProcessorEditor::ModKnob::proportionWith (float x) const
+{
+    const float base = param->getValue();
+    const auto range = param->getNormalisableRange();
+
+    // These two are not moved in a straight line, so follow what the engine does with them.
+    if (dest == amv::mod::dstCutoff)
+        return param->convertTo0to1 (juce::jlimit (range.start, range.end, param->convertFrom0to1 (base) * std::exp2 (x * 5.0f)));
+
+    if (dest == amv::mod::dstVolume)
+    {
+        const float gain = juce::jlimit (0.0f, 2.0f, 1.0f + x);
+        const float db = gain < 1.0e-4f ? range.start : param->convertFrom0to1 (base) + juce::Decibels::gainToDecibels (gain);
+        return param->convertTo0to1 (juce::jlimit (range.start, range.end, db));
+    }
+
+    return juce::jlimit (0.0f, 1.0f, base + x);
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::paint (juce::Graphics& g)
+{
+    juce::Slider::paint (g);
+
+    if (dest < 0 || param == nullptr)
+        return;
+
+    const auto area = getLocalBounds().toFloat().reduced (2.0f);
+    const float size = juce::jmin (area.getWidth(), area.getHeight());
+    const auto centre = area.getCentre();
+    const float radius = size * 0.5f - 1.5f;
+    const auto rotary = getRotaryParameters();
+    const auto angleFor = [&] (float proportion)
+    {
+        return rotary.startAngleRadians + proportion * (rotary.endAngleRadians - rotary.startAngleRadians);
+    };
+    const auto arc = [&] (float from, float to)
+    {
+        juce::Path path;
+        path.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, angleFor (juce::jmin (from, to)), angleFor (juce::jmax (from, to)), true);
+        return path;
+    };
+
+    // While a source is being dragged, every knob that can take it shows a ring.
+    if (showAsTarget || dropHover)
+    {
+        g.setColour (dropHover ? amv::colour::text : amv::colour::text.withAlpha (0.22f));
+        g.strokePath (arc (0.0f, 1.0f), juce::PathStrokeType (dropHover ? 2.2f : 1.4f));
+    }
+
+    if (assignments.empty())
+        return;
+
+    // One arc per modulation: how far that source can move the knob.
+    for (const auto& a : assignments)
+    {
+        const float farEnd = proportionWith (a.amount);
+        const float nearEnd = isBipolar (a.source) ? proportionWith (-a.amount) : proportionWith (0.0f);
+        if (std::abs (farEnd - nearEnd) < 0.004f)
+            continue;
+
+        g.setColour (amv::colour::forSource (a.source));
+        g.strokePath (arc (nearEnd, farEnd), juce::PathStrokeType (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    // The dot is where the modulated value is right now.
+    const float now = angleFor (proportionWith (live));
+    const juce::Point<float> dot (centre.x + radius * std::sin (now), centre.y - radius * std::cos (now));
+    g.setColour (amv::colour::background);
+    g.fillEllipse (dot.x - 4.0f, dot.y - 4.0f, 8.0f, 8.0f);
+    g.setColour (amv::colour::text);
+    g.fillEllipse (dot.x - 2.6f, dot.y - 2.6f, 5.2f, 5.2f);
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::mouseDown (const juce::MouseEvent& e)
+{
+    if (dest >= 0 && owner != nullptr && e.mods.isPopupMenu())
+    {
+        owner->showModMenu (*this);
+        return;
+    }
+
+    // Shift-drag sets the depth of the modulation that was added last.
+    if (dest >= 0 && owner != nullptr && e.mods.isShiftDown() && ! assignments.empty())
+    {
+        depthDrag = true;
+        depthStart = assignments.back().amount;
+        owner->slotParams[(size_t) assignments.back().slot].amount->beginChangeGesture();
+        return;
+    }
+
+    juce::Slider::mouseDown (e);
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! depthDrag)
+    {
+        juce::Slider::mouseDrag (e);
+        return;
+    }
+
+    if (! assignments.empty())
+        owner->setSlotAmount (assignments.back().slot, depthStart - (float) e.getDistanceFromDragStartY() / 140.0f, false);
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::mouseUp (const juce::MouseEvent& e)
+{
+    if (! depthDrag)
+    {
+        juce::Slider::mouseUp (e);
+        return;
+    }
+
+    depthDrag = false;
+    if (! assignments.empty())
+        owner->slotParams[(size_t) assignments.back().slot].amount->endChangeGesture();
+}
+
+bool AMVSynthAudioProcessorEditor::ModKnob::isInterestedInDragSource (const SourceDetails& details)
+{
+    return dest >= 0 && details.description.toString().startsWith (sourceTag);
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::itemDragEnter (const SourceDetails&)
+{
+    dropHover = true;
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::itemDragExit (const SourceDetails&)
+{
+    dropHover = false;
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::ModKnob::itemDropped (const SourceDetails& details)
+{
+    dropHover = false;
+    if (owner != nullptr)
+        owner->assignModulation (details.description.toString().fromFirstOccurrenceOf (sourceTag, false, false).getIntValue(), dest);
+    repaint();
+}
+
+std::vector<AMVSynthAudioProcessorEditor::Assignment> AMVSynthAudioProcessorEditor::assignmentsFor (int dest) const
+{
+    std::vector<Assignment> result;
+    for (int i = 0; i < amv::mod::numSlots; ++i)
+    {
+        const auto& slot = slotParams[(size_t) i];
+        const int source = realValue (slot.source);
+        if (source != amv::mod::srcNone && realValue (slot.dest) == dest)
+            result.push_back ({ i, source, slot.amount->convertFrom0to1 (slot.amount->getValue()) });
+    }
+
+    return result;
+}
+
+void AMVSynthAudioProcessorEditor::assignModulation (int source, int dest)
+{
+    if (source <= amv::mod::srcNone || source >= amv::mod::numSources || dest < 0 || dest >= amv::mod::numDests)
+        return;
+
+    const juce::String route = juce::String (amv::getModSources()[(size_t) source]) + " > " + amv::getModDests()[(size_t) dest];
+
+    for (const auto& a : assignmentsFor (dest))
+        if (a.source == source)
+        {
+            showStatus (route + " is already set. Shift-drag the knob for depth.");
+            return;
+        }
+
+    for (int i = 0; i < amv::mod::numSlots; ++i)
+    {
+        const auto& slot = slotParams[(size_t) i];
+        if (realValue (slot.source) != amv::mod::srcNone)
+            continue;
+
+        setParameter (slot.dest, (float) dest);
+        setParameter (slot.amount, 0.35f);
+        setParameter (slot.source, (float) source);
+        showStatus (route + "  (MOD " + juce::String (i + 1) + ")");
+        return;
+    }
+
+    showStatus ("All " + juce::String (amv::mod::numSlots) + " modulation slots are in use.");
+}
+
+void AMVSynthAudioProcessorEditor::setSlotAmount (int slot, float amount, bool gesture)
+{
+    auto* param = slotParams[(size_t) slot].amount;
+    if (gesture)
+        param->beginChangeGesture();
+    param->setValueNotifyingHost (param->convertTo0to1 (juce::jlimit (-1.0f, 1.0f, amount)));
+    if (gesture)
+        param->endChangeGesture();
+
+    showStatus (juce::String (amv::getModSources()[(size_t) realValue (slotParams[(size_t) slot].source)]) + " depth "
+                + juce::String (juce::roundToInt (juce::jlimit (-1.0f, 1.0f, amount) * 100.0f)) + "%");
+}
+
+void AMVSynthAudioProcessorEditor::clearSlot (int slot)
+{
+    setParameter (slotParams[(size_t) slot].source, (float) amv::mod::srcNone);
+    setParameter (slotParams[(size_t) slot].amount, 0.0f);
+}
+
+void AMVSynthAudioProcessorEditor::showModMenu (ModKnob& knob)
+{
+    juce::PopupMenu menu, add;
+    const auto current = assignmentsFor (knob.dest);
+
+    for (int source = 1; source < amv::mod::numSources; ++source)
+    {
+        bool used = false;
+        for (const auto& a : current)
+            used = used || a.source == source;
+        add.addItem (100 + source, amv::getModSources()[(size_t) source], ! used, used);
+    }
+
+    menu.addSectionHeader (juce::String ("Modulate ") + amv::getModDests()[(size_t) knob.dest]);
+    menu.addSubMenu ("Add modulation from", add);
+
+    for (const auto& a : current)
+    {
+        const juce::String name = amv::getModSources()[(size_t) a.source];
+        menu.addSeparator();
+        menu.addItem (300 + a.slot, "Invert " + name + "  (" + juce::String (juce::roundToInt (a.amount * 100.0f)) + "%)");
+        menu.addItem (200 + a.slot, "Remove " + name);
+    }
+
+    const int dest = knob.dest;
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&knob),
+                        [safe = juce::Component::SafePointer<AMVSynthAudioProcessorEditor> (this), dest] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+
+                            if (result >= 300)
+                            {
+                                const auto* amount = safe->slotParams[(size_t) (result - 300)].amount;
+                                safe->setSlotAmount (result - 300, -amount->convertFrom0to1 (amount->getValue()), true);
+                            }
+                            else if (result >= 200)
+                                safe->clearSlot (result - 200);
+                            else
+                                safe->assignModulation (result - 100, dest);
+                        });
+}
+
+void AMVSynthAudioProcessorEditor::showStatus (const juce::String& text)
+{
+    statusLabel.setText (text, juce::dontSendNotification);
+    statusTicks = 120; // four seconds at the timer rate
+}
+
+void AMVSynthAudioProcessorEditor::updateModulationDisplay()
+{
+    if (statusTicks > 0 && --statusTicks == 0)
+        statusLabel.setText ({}, juce::dontSendNotification);
+
+    std::array<float, amv::mod::numSources> values {};
+    bool changed = false;
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        values[i] = processor.modSourceValues[i].load (std::memory_order_relaxed);
+        changed = changed || std::abs (values[i] - sourceBar.values[i]) > 0.004f;
+    }
+
+    if (changed)
+    {
+        sourceBar.values = values;
+        if (sourceBar.isVisible())
+            sourceBar.repaint();
+    }
+
+    for (size_t i = 0; i < lfoDisplays.size(); ++i)
+    {
+        auto& display = lfoDisplays[i];
+        const int shape = juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::lfo ((int) i, "Shape"))->load());
+        const float value = values[(size_t) display.source];
+        if (shape != display.shape || std::abs (value - display.value) > 0.004f)
+        {
+            display.shape = shape;
+            display.value = value;
+            if (display.isVisible())
+                display.repaint();
+        }
+    }
+
+    // Collect the modulations once, then hand each knob its own.
+    std::array<std::vector<Assignment>, amv::mod::numDests> byDest;
+    for (int i = 0; i < amv::mod::numSlots; ++i)
+    {
+        const auto& slot = slotParams[(size_t) i];
+        const int source = realValue (slot.source), dest = realValue (slot.dest);
+        if (source != amv::mod::srcNone && dest >= 0 && dest < amv::mod::numDests)
+            byDest[(size_t) dest].push_back ({ i, source, slot.amount->convertFrom0to1 (slot.amount->getValue()) });
+    }
+
+    const bool dragging = isDragAndDropActive();
+    for (auto& k : knobs)
+    {
+        auto& knob = k->slider;
+        if (knob.dest < 0)
+            continue;
+
+        const auto& mine = byDest[(size_t) knob.dest];
+        float live = 0.0f;
+        for (const auto& a : mine)
+            live += values[(size_t) a.source] * a.amount;
+
+        const bool differs = mine != knob.assignments || std::abs (live - knob.live) > 0.003f || dragging != knob.showAsTarget
+                             || (! dragging && knob.dropHover);
+        if (! differs)
+            continue;
+
+        knob.assignments = mine;
+        knob.live = live;
+        knob.showAsTarget = dragging;
+        knob.dropHover = knob.dropHover && dragging;
+        if (knob.isVisible())
+            knob.repaint();
+    }
+}
+
+juce::Rectangle<float> AMVSynthAudioProcessorEditor::ModSourceBar::chipBounds (int source) const
+{
+    const auto area = getLocalBounds().toFloat().withTrimmedLeft (96.0f);
+    const float width = area.getWidth() / (float) (amv::mod::numSources - 1);
+    return juce::Rectangle<float> (area.getX() + width * (float) (source - 1), area.getY(), width, area.getHeight()).reduced (2.5f, 2.0f);
+}
+
+int AMVSynthAudioProcessorEditor::ModSourceBar::chipAt (juce::Point<float> position) const
+{
+    for (int source = 1; source < amv::mod::numSources; ++source)
+        if (chipBounds (source).contains (position))
+            return source;
+
+    return 0;
+}
+
+void AMVSynthAudioProcessorEditor::ModSourceBar::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    g.setColour (colour::dimText);
+    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    g.drawText ("MOD SOURCES", getLocalBounds().withWidth (92), juce::Justification::centredLeft);
+
+    for (int source = 1; source < mod::numSources; ++source)
+    {
+        const auto chip = chipBounds (source);
+        const auto tint = colour::forSource (source);
+        const bool lit = source == hover || source == pressed;
+
+        g.setColour (lit ? tint.withAlpha (0.22f) : colour::panel);
+        g.fillRoundedRectangle (chip, 6.0f);
+        g.setColour (tint.withAlpha (lit ? 1.0f : 0.55f));
+        g.drawRoundedRectangle (chip.reduced (0.5f), 6.0f, 1.0f);
+
+        g.setColour (lit ? colour::text : tint);
+        g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+        g.drawText (chipNames[source], chip.withTrimmedBottom (5.0f), juce::Justification::centred);
+
+        // A small meter along the bottom shows what the source is doing.
+        const auto meter = chip.reduced (7.0f, 0.0f).withTop (chip.getBottom() - 6.5f).withHeight (2.5f);
+        g.setColour (colour::track);
+        g.fillRoundedRectangle (meter, 1.2f);
+
+        const float v = juce::jlimit (-1.0f, 1.0f, values[(size_t) source]);
+        g.setColour (tint);
+        if (isBipolar (source))
+        {
+            const float half = meter.getWidth() * 0.5f, x = meter.getCentreX() + juce::jmin (0.0f, v) * half;
+            g.fillRoundedRectangle (x, meter.getY(), juce::jmax (1.5f, std::abs (v) * half), meter.getHeight(), 1.2f);
+        }
+        else
+            g.fillRoundedRectangle (meter.withWidth (juce::jmax (0.0f, v) * meter.getWidth()), 1.2f);
+    }
+}
+
+void AMVSynthAudioProcessorEditor::ModSourceBar::mouseMove (const juce::MouseEvent& e)
+{
+    const int source = chipAt (e.position);
+    if (source != hover)
+    {
+        hover = source;
+        setMouseCursor (source != 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+}
+
+void AMVSynthAudioProcessorEditor::ModSourceBar::mouseExit (const juce::MouseEvent&)
+{
+    hover = 0;
+    pressed = 0;
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::ModSourceBar::mouseDown (const juce::MouseEvent& e)
+{
+    pressed = chipAt (e.position);
+    if (pressed != 0 && owner != nullptr)
+        owner->showStatus (juce::String ("Drag ") + amv::getModSources()[(size_t) pressed] + " onto a knob");
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::ModSourceBar::mouseDrag (const juce::MouseEvent& e)
+{
+    if (pressed == 0 || owner == nullptr || owner->isDragAndDropActive() || e.getDistanceFromDragStart() < 4)
+        return;
+
+    const auto chip = chipBounds (pressed).getSmallestIntegerContainer();
+    owner->startDragging (juce::String (sourceTag) + juce::String (pressed), this, juce::ScaledImage (createComponentSnapshot (chip)));
+    pressed = 0;
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    auto area = getLocalBounds().toFloat();
+    g.setColour (colour::background);
+    g.fillRoundedRectangle (area, 6.0f);
+    area.reduce (8.0f, 9.0f);
+
+    const auto tint = colour::forSource (source);
+    const float mid = area.getCentreY(), half = area.getHeight() * 0.5f;
+    g.setColour (colour::track);
+    g.fillRect (area.getX(), mid - 0.5f, area.getWidth(), 1.0f);
+
+    // One cycle of the shape. Random is drawn as steps.
+    static const float steps[6] { 0.5f, -0.7f, 0.9f, -0.2f, 0.35f, -0.9f };
+    const auto at = [this] (float ph)
+    {
+        switch (shape)
+        {
+            case 1:  return ph < 0.5f ? 4.0f * ph - 1.0f : 3.0f - 4.0f * ph;
+            case 2:  return 1.0f - 2.0f * ph;
+            case 3:  return ph < 0.5f ? 1.0f : -1.0f;
+            case 4:  return steps[juce::jmin (5, (int) (ph * 6.0f))];
+            default: return std::sin (ph * juce::MathConstants<float>::twoPi);
+        }
+    };
+
+    juce::Path path;
+    const int points = juce::jmax (2, (int) area.getWidth());
+    for (int i = 0; i < points; ++i)
+    {
+        const float x = area.getX() + (float) i, y = mid - at ((float) i / (float) (points - 1)) * half;
+        if (i == 0)
+            path.startNewSubPath (x, y);
+        else
+            path.lineTo (x, y);
+    }
+    g.setColour (tint.withAlpha (0.85f));
+    g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+
+    // The line follows the value of the LFO as it runs.
+    const float y = mid - juce::jlimit (-1.0f, 1.0f, value) * half;
+    g.setColour (colour::text.withAlpha (0.8f));
+    g.fillRect (area.getX(), y - 0.75f, area.getWidth(), 1.5f);
+    g.fillEllipse (area.getRight() - 4.0f, y - 3.0f, 6.0f, 6.0f);
+}
+
+void AMVSynthAudioProcessorEditor::TextDisplay::paint (juce::Graphics& g)
+{
+    auto area = getLocalBounds().toFloat().reduced (4.0f, 2.0f);
+    const float lineHeight = juce::jmin (24.0f, area.getHeight() / (float) juce::jmax (1, lines.size()));
+    g.setFont (juce::FontOptions (13.0f));
+
+    for (const auto& line : lines)
+    {
+        auto row = area.removeFromTop (lineHeight);
+        g.setColour (amv::colour::teal);
+        g.fillEllipse (row.getX(), row.getCentreY() - 2.0f, 4.0f, 4.0f);
+        g.setColour (amv::colour::text.withAlpha (0.85f));
+        g.drawText (line, row.withTrimmedLeft (12.0f), juce::Justification::centredLeft);
+    }
+}
+
 void AMVSynthAudioProcessorEditor::PatternDisplay::paint (juce::Graphics& g)
 {
     using namespace amv;
@@ -994,7 +1537,9 @@ void AMVSynthAudioProcessorEditor::PatternDisplay::paint (juce::Graphics& g)
 void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
 {
     using namespace amv;
-    g.fillAll (colour::background);
+    g.setGradientFill (juce::ColourGradient (colour::background.brighter (0.04f), 0.0f, 0.0f,
+                                             colour::background.darker (0.25f), 0.0f, (float) getHeight(), false));
+    g.fillAll();
 
     auto header = getLocalBounds().removeFromTop (headerHeight);
     g.setColour (colour::header);
@@ -1018,16 +1563,26 @@ void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
         if (s.page != currentPage)
             continue;
 
+        // A soft shadow, a panel that is a little lighter at the top, and a hairline border.
         const auto r = s.bounds.toFloat();
-        g.setColour (s.balkan ? colour::balkanPanel : colour::panel);
-        g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (s.balkan ? colour::balkanBorder : colour::panelBorder);
-        g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
+        const auto base = s.balkan ? colour::balkanPanel : colour::panel;
+        g.setColour (juce::Colours::black.withAlpha (0.28f));
+        g.fillRoundedRectangle (r.translated (0.0f, 2.0f), 10.0f);
+        g.setGradientFill (juce::ColourGradient (base.brighter (0.07f), 0.0f, r.getY(), base.darker (0.12f), 0.0f, r.getBottom(), false));
+        g.fillRoundedRectangle (r, 10.0f);
+        g.setColour ((s.balkan ? colour::balkanBorder : colour::panelBorder).withAlpha (0.8f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
 
         auto titleArea = s.bounds.reduced (12, 0).removeFromTop (titleHeight + 4);
         if (s.balkan)
         {
             drawKilim (g, titleArea.removeFromLeft (30).toFloat().withSizeKeepingCentre (30.0f, 10.0f), colour::red, 3);
+            titleArea.removeFromLeft (8);
+        }
+        else
+        {
+            g.setColour (colour::teal);
+            g.fillRoundedRectangle (titleArea.removeFromLeft (3).toFloat().withSizeKeepingCentre (3.0f, 12.0f), 1.5f);
             titleArea.removeFromLeft (8);
         }
 
@@ -1085,7 +1640,7 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
     for (auto* knob : s.knobs)
     {
         auto cell = inner.removeFromLeft (knobWidth);
-        const int size = juce::jmin (cell.getWidth(), cell.getHeight() - 20, 80);
+        const int size = juce::jmin (cell.getWidth(), cell.getHeight() - 20, 70);
         auto group = cell.withSizeKeepingCentre (cell.getWidth(), size + 20);
         knob->slider.setBounds (group.removeFromTop (size).withSizeKeepingCentre (size, size));
         knob->label.setBounds (group);
@@ -1099,8 +1654,8 @@ void AMVSynthAudioProcessorEditor::resized()
     headerArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
-        tabs[i].setBounds (headerArea.removeFromRight (70));
-        headerArea.removeFromRight (6);
+        tabs[i].setBounds (headerArea.removeFromRight (62));
+        headerArea.removeFromRight (5);
     }
 
     // The preset bar fills the space between the logo and the tabs.
@@ -1119,6 +1674,15 @@ void AMVSynthAudioProcessorEditor::resized()
     keyboard.setBounds (area.removeFromBottom (keyboardHeight));
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7
     area.reduce (margin, margin);
+
+    // The modulation sources sit above the panels on every page that has knobs to drop them on.
+    if (currentPage != 4)
+    {
+        auto bar = area.removeFromTop (sourceBarHeight);
+        area.removeFromTop (gap - 2);
+        statusLabel.setBounds (bar.removeFromRight (230));
+        sourceBar.setBounds (bar);
+    }
 
     int numRows = 1;
     for (const auto& s : sections)

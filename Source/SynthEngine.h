@@ -109,6 +109,10 @@ struct EngineParams
     //   voice: vowel, breath, size, tension
     std::array<float, 4> macro { 0.7f, 0.4f, 0.3f, 0.5f };
 
+    // Lowest and highest value of the four controls of the selected model, so modulation can
+    // move them over their own range.
+    std::array<std::array<float, 2>, 4> engineRange { { { 0.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 1.0f } } };
+
     // Performance
     float vibDepthCents = 28.0f;
     float vibRateHz = 6.2f;
@@ -190,6 +194,25 @@ public:
     bool isHeld() const noexcept { return held; }
     int getNote() const noexcept { return note; }
     int getChannel() const noexcept { return channel; }
+
+    /** Writes this voice's own modulation sources, for the display. */
+    void fillSources (float* src) const noexcept
+    {
+        src[mod::srcFilterEnv] = lastFilterEnv;
+        src[mod::srcVelocity] = velocity;
+        src[mod::srcPressure] = notePressure;
+        src[mod::srcTimbre] = noteTimbre;
+    }
+
+    /** One of the four controls of the selected model, wherever that model keeps it. */
+    static float& engineControl (EngineParams& p, int index) noexcept
+    {
+        if (p.model == Model::juzniVetar)
+            return index == 0 ? p.tone : index == 1 ? p.pulseWidth : index == 2 ? p.detuneCents : p.sub;
+        if (p.model == Model::accordion)
+            return index == 0 ? p.bellows : index == 1 ? p.musetteCents : index == 2 ? p.registerPos : p.click;
+        return p.macro[(size_t) index];
+    }
 
     /** Per-note expression from the note's MIDI channel: bend in semitones, pressure 0..1 and
         timbre -1..1. Called before every chunk; the values glide, except right after a note starts. */
@@ -311,6 +334,27 @@ public:
             modulated.oscB.level = unit (base.oscB.level + dest[mod::dstOscBLevel]);
             modulated.engineLevel = unit (base.engineLevel + dest[mod::dstEngineLevel]);
             modulated.noiseLevel = unit (base.noiseLevel + dest[mod::dstNoiseLevel]);
+            modulated.subLevel = unit (base.subLevel + dest[mod::dstSubLevel]);
+
+            // The full amount moves a control across its whole range.
+            const auto ranged = [] (float value, float amount, float lowest, float highest)
+            {
+                return juce::jlimit (lowest, highest, value + amount * (highest - lowest));
+            };
+            modulated.filterEnv = ranged (base.filterEnv, dest[mod::dstFilterEnv], -1.0f, 1.0f);
+            modulated.vibDepthCents = ranged (base.vibDepthCents, dest[mod::dstVibrato], 0.0f, 100.0f);
+            modulated.vibRateHz = ranged (base.vibRateHz, dest[mod::dstVibRate], 2.0f, 12.0f);
+            modulated.oscA.detuneCents = ranged (base.oscA.detuneCents, dest[mod::dstOscADetune], 0.0f, 100.0f);
+            modulated.oscB.detuneCents = ranged (base.oscB.detuneCents, dest[mod::dstOscBDetune], 0.0f, 100.0f);
+            modulated.oscA.pitch = ranged (base.oscA.pitch, dest[mod::dstOscAPitch], -24.0f, 24.0f);
+            modulated.oscB.pitch = ranged (base.oscB.pitch, dest[mod::dstOscBPitch], -24.0f, 24.0f);
+
+            for (int i = 0; i < 4; ++i)
+                if (std::abs (dest[mod::dstEngine1 + i]) > 0.0f)
+                {
+                    float& control = engineControl (modulated, i);
+                    control = ranged (control, dest[mod::dstEngine1 + i], base.engineRange[(size_t) i][0], base.engineRange[(size_t) i][1]);
+                }
             current = &modulated;
 
             // Small amounts give fine pitch control, the full amount reaches two octaves.
@@ -1415,6 +1459,9 @@ public:
 
     const Tuning& getTuning() const noexcept { return tuning; }
 
+    /** The modulation sources as they were at the end of the last block, indexed by mod::Source. */
+    const std::array<float, mod::numSources>& getShownSources() const noexcept { return shownSources; }
+
     /** `transport` is only needed for tempo-synced LFOs. */
     void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const TransportInfo& transport = {})
     {
@@ -1470,6 +1517,15 @@ private:
             sources[mod::srcModWheel] = wheelSmooth;
             for (size_t i = 0; i < params.modMacros.size(); ++i)
                 sources[mod::srcMacro1 + (int) i] = params.modMacros[i];
+
+            // What the display shows: the shared sources, and the per-note ones of the newest note.
+            const Voice* newest = nullptr;
+            for (const auto& v : voices)
+                if (v.isActive() && (newest == nullptr || v.getAge() > newest->getAge()))
+                    newest = &v;
+            std::copy (sources, sources + mod::numSources, shownSources.begin());
+            if (newest != nullptr)
+                newest->fillSources (shownSources.data());
 
             bool anyHeld = false;
             for (auto& v : voices)
@@ -1652,6 +1708,7 @@ private:
     juce::uint64 counter = 0;
     float bendSmooth = 0.0f, bendTarget = 0.0f, bendCoeff = 1.0f;
     float tuneOffset = 0.0f; // semitones, from the A4 reference
+    std::array<float, mod::numSources> shownSources {};
 
     // Per-channel expression for MPE; index 0 is channel 1, the master channel.
     std::array<float, 16> channelBend {}, channelPressure {}, channelTimbre {};

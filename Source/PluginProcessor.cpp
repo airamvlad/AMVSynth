@@ -15,6 +15,14 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
         macroRefs[(size_t) i] = ref (id::macro (i));
     for (int i = 0; i < mod::numSlots; ++i)
         slotRefs[(size_t) i] = { ref (id::slot (i, "Source")), ref (id::slot (i, "Dest")), ref (id::slot (i, "Amount")) };
+
+    const auto& knobIds = getEngineKnobIds();
+    for (size_t m = 0; m < knobIds.size(); ++m)
+        for (size_t k = 0; k < 4; ++k)
+        {
+            const auto range = apvts.getParameterRange (knobIds[m][k]);
+            engineRanges[m][k] = { range.start, range.end };
+        }
 }
 
 void AMVSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -82,6 +90,7 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
         case Model::accordion: break;
     }
 
+    p.engineRange = engineRanges[(size_t) juce::jlimit (0, (int) engineRanges.size() - 1, (int) p.model)];
     p.engineLevel = value (id::engineLevel);
     p.oscA = { juce::roundToInt (value (id::oscATable)), value (id::oscAPos), juce::roundToInt (value (id::oscAUnison)),
                value (id::oscADetune), value (id::oscAPitch), value (id::oscAFine), value (id::oscALevel), value (id::oscAWidth) };
@@ -167,6 +176,10 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     engine.setParams (readParams());
     engine.process (work, arpMidi, transport);
+
+    const auto& shown = engine.getShownSources();
+    for (size_t i = 0; i < shown.size(); ++i)
+        modSourceValues[i].store (shown[i], std::memory_order_relaxed);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
     outputGain.applyGain (work, numSamples);

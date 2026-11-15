@@ -175,6 +175,56 @@ inline juce::String macro (int index) { return "macro" + juce::String (index + 1
 inline juce::String slot (int index, const char* suffix) { return "mod" + juce::String (index + 1) + suffix; }
 } // namespace id
 
+/** The four controls of every Balkan model, in the order of the model list. */
+inline const std::array<std::array<const char*, 4>, 17>& getEngineKnobIds()
+{
+    static const std::array<std::array<const char*, 4>, 17> ids { {
+        { id::tone, id::pulseWidth, id::detune, id::sub },
+        { id::accBellows, id::accMusette, id::accRegister, id::accClick },
+        { id::gusBow, id::gusPosition, id::gusRasp, id::gusNasal },
+        { id::fruBreath, id::fruOverblow, id::fruNoise, id::fruChiff },
+        { id::kavBreath, id::kavOverblow, id::kavNoise, id::kavThroat },
+        { id::gajDrone, id::gajDroneTune, id::gajBag, id::gajEdge },
+        { id::zurPressure, id::zurBite, id::zurGrowl, id::zurNasal },
+        { id::tamPluck, id::tamDecay, id::tamDouble, id::tamTone },
+        { id::tapThump, id::tapSnap, id::tapDecay, id::tapRing },
+        { id::dvoBreath, id::dvoSecond, id::dvoInterval, id::dvoBeat },
+        { id::claBreath, id::claReed, id::claGrowl, id::claBody },
+        { id::truBlow, id::truBlare, id::truRasp, id::truMute },
+        { id::vioBow, id::vioPosition, id::vioScratch, id::vioBody },
+        { id::sarPluck, id::sarDecay, id::sarDrone, id::sarTone },
+        { id::kanPluck, id::kanDecay, id::kanShimmer, id::kanTremolo },
+        { id::darStrike, id::darSnap, id::darDecay, id::darRing },
+        { id::voxVowel, id::voxBreath, id::voxSize, id::voxTension },
+    } };
+    return ids;
+}
+
+/** The modulation destination a parameter belongs to, or -1 when it cannot be modulated. */
+inline int modDestFor (const juce::String& paramId)
+{
+    static const std::pair<const char*, int> direct[] {
+        { id::cutoff, mod::dstCutoff }, { id::resonance, mod::dstResonance }, { id::filterEnv, mod::dstFilterEnv },
+        { id::oscAPos, mod::dstOscAPosition }, { id::oscBPos, mod::dstOscBPosition },
+        { id::oscALevel, mod::dstOscALevel }, { id::oscBLevel, mod::dstOscBLevel },
+        { id::oscADetune, mod::dstOscADetune }, { id::oscBDetune, mod::dstOscBDetune },
+        { id::oscAPitch, mod::dstOscAPitch }, { id::oscBPitch, mod::dstOscBPitch },
+        { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
+        { id::vibDepth, mod::dstVibrato }, { id::vibRate, mod::dstVibRate }, { id::level, mod::dstVolume },
+    };
+
+    for (const auto& [name, dest] : direct)
+        if (paramId == name)
+            return dest;
+
+    for (const auto& model : getEngineKnobIds())
+        for (size_t i = 0; i < model.size(); ++i)
+            if (paramId == model[i])
+                return mod::dstEngine1 + (int) i;
+
+    return -1;
+}
+
 /** Settings of the project rather than of a sound; loading a preset does not change them. */
 inline bool isGlobalParameter (const juce::String& paramId)
 {
