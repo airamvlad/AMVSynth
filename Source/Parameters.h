@@ -194,6 +194,12 @@ inline constexpr auto smpScan = "smpScan";
 inline constexpr auto smpShape = "smpShape";
 inline constexpr auto smpSpread = "smpSpread";
 inline constexpr auto smpRevChance = "smpRevChance";
+inline constexpr auto oscAXmodType = "oscAXmodType";
+inline constexpr auto oscAXmodSource = "oscAXmodSource";
+inline constexpr auto oscAXmodAmount = "oscAXmodAmount";
+inline constexpr auto oscBXmodType = "oscBXmodType";
+inline constexpr auto oscBXmodSource = "oscBXmodSource";
+inline constexpr auto oscBXmodAmount = "oscBXmodAmount";
 inline constexpr auto oscAWarp = "oscAWarp";
 inline constexpr auto oscAWarpAmount = "oscAWarpAmount";
 inline constexpr auto oscBWarp = "oscBWarp";
@@ -262,6 +268,7 @@ inline int modDestFor (const juce::String& paramId)
         { id::delayFeedback, mod::dstDelayFeedback }, { id::delayTone, mod::dstDelayTone }, { id::delayMix, mod::dstDelayMix },
         { id::reverbSize, mod::dstReverbSize }, { id::reverbMix, mod::dstReverbMix },
         { id::filter2Cutoff, mod::dstCutoff2 }, { id::filter2Res, mod::dstResonance2 },
+        { id::oscAXmodAmount, mod::dstOscAFm }, { id::oscBXmodAmount, mod::dstOscBFm },
         { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
         { id::vibDepth, mod::dstVibrato }, { id::vibRate, mod::dstVibRate }, { id::level, mod::dstVolume },
     };
@@ -442,6 +449,16 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::oscAWarpAmount, "Osc A Warp", Range (0.0f, 1.0f), 0.0f);
     addChoice (id::oscBWarp, "Osc B Warp Mode", warpModes, 0);
     add (id::oscBWarpAmount, "Osc B Warp", Range (0.0f, 1.0f), 0.0f);
+
+    juce::StringArray xmodTypes;
+    for (const auto* n : getXmodTypes())
+        xmodTypes.add (n);
+    addChoice (id::oscAXmodType, "Osc A Mod Type", xmodTypes, 0);
+    addChoice (id::oscAXmodSource, "Osc A Mod Source", getXmodSources (0), 0);
+    add (id::oscAXmodAmount, "Osc A Mod Amount", Range (0.0f, 1.0f), 0.0f);
+    addChoice (id::oscBXmodType, "Osc B Mod Type", xmodTypes, 0);
+    addChoice (id::oscBXmodSource, "Osc B Mod Source", getXmodSources (1), 0);
+    add (id::oscBXmodAmount, "Osc B Mod Amount", Range (0.0f, 1.0f), 0.0f);
 
     // Sampler
     add (id::smpLevel, "Sampler Level", Range (0.0f, 1.0f), 0.0f);

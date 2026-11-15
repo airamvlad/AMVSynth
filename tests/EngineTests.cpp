@@ -1325,6 +1325,156 @@ int main()
             }
         }
 
+        // FM, ring and amplitude modulation of the wavetable oscillators. The note is A3, a sine at 220 Hz.
+        {
+            // The level of single frequencies in the held note.
+            const auto partials = [&] (const std::function<void (EngineParams&)>& setUp, std::initializer_list<float> frequencies)
+            {
+                auto p = open;
+                p.engineLevel = 0.0f;
+                p.oscA.table = 0;
+                p.oscA.position = 0.0f;
+                p.oscA.unison = 1;
+                p.oscA.level = 1.0f;
+                p.oscB.table = 0;
+                p.oscB.position = 0.0f;
+                p.vibDepthCents = 0.0f;
+                p.filterEnv = 0.0f;
+                p.amp = { 0.002f, 0.1f, 1.0f, 0.05f };
+                setUp (p);
+
+                SynthEngine engine;
+                engine.prepare (48000.0, 512);
+                engine.setParams (p);
+                std::vector<float> out;
+                for (int block = 0; block < 100; ++block)
+                {
+                    juce::MidiBuffer midi;
+                    if (block == 0)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 1);
+                    juce::AudioBuffer<float> buffer (2, 512);
+                    buffer.clear();
+                    engine.process (buffer, midi);
+                    out.insert (out.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + 512);
+                }
+
+                std::vector<float> levels;
+                const size_t from = 9600, count = 38400; // 0.8 s, a whole number of cycles of 110 Hz
+                for (float hz : frequencies)
+                {
+                    double re = 0.0, im = 0.0;
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        const double angle = juce::MathConstants<double>::twoPi * hz * (double) i / 48000.0;
+                        const double v = std::isfinite (out[from + i]) ? out[from + i] : 1.0e6;
+                        re += v * std::cos (angle);
+                        im += v * std::sin (angle);
+                    }
+                    levels.push_back ((float) (2.0 * std::sqrt (re * re + im * im) / (double) count));
+                }
+                return levels;
+            };
+
+            const auto dry = partials ([] (EngineParams&) {}, { 110.0f, 220.0f, 330.0f, 440.0f });
+            const float carrier = dry[1];
+            check (carrier > 0.3f && dry[0] < carrier * 0.01f && dry[2] < carrier * 0.01f && dry[3] < carrier * 0.01f, "the test note is a clean sine");
+
+            const auto bySub = [] (int type, float amount)
+            {
+                return [type, amount] (EngineParams& p)
+                {
+                    p.oscA.xmodType = type;
+                    p.oscA.xmodSource = xmod::sub;
+                    p.oscA.xmodAmount = amount;
+                };
+            };
+
+            // Ring by the sub, an octave down: the note itself goes, 110 and 330 Hz take its place.
+            const auto ring = partials (bySub (xmod::ring, 1.0f), { 110.0f, 220.0f, 330.0f });
+            std::printf ("      ring by the sub: 110 Hz %.3f, 220 Hz %.3f, 330 Hz %.3f (dry 220 Hz %.3f)\n", (double) ring[0], (double) ring[1], (double) ring[2], (double) carrier);
+            check (near (ring[0], carrier * 0.5f, carrier * 0.03f) && near (ring[2], carrier * 0.5f, carrier * 0.03f) && ring[1] < carrier * 0.02f,
+                   "ring modulation replaces the note with its sum and difference tones");
+
+            const auto am = partials (bySub (xmod::am, 1.0f), { 110.0f, 220.0f, 330.0f });
+            check (near (am[1], carrier * 0.5f, carrier * 0.03f) && near (am[0], carrier * 0.25f, carrier * 0.03f) && near (am[2], carrier * 0.25f, carrier * 0.03f),
+                   "amplitude modulation keeps the note and adds side tones");
+
+            const auto none = partials (bySub (xmod::fm, 0.0f), { 220.0f, 440.0f });
+            check (near (none[0], carrier, carrier * 0.001f) && none[1] < carrier * 0.01f, "a modulation amount of zero leaves the oscillator alone");
+
+            // FM from oscillator B, which is turned down and still does its work.
+            const auto fromB = partials ([] (EngineParams& p)
+                                         {
+                                             p.oscA.xmodType = xmod::fm;
+                                             p.oscA.xmodSource = xmod::otherOsc;
+                                             p.oscA.xmodAmount = 0.5f;
+                                             p.oscB.level = 0.0f;
+                                         }, { 220.0f, 440.0f, 660.0f });
+            std::printf ("      FM from a silent oscillator B: 220 Hz %.3f, 440 Hz %.3f, 660 Hz %.3f\n", (double) fromB[0], (double) fromB[1], (double) fromB[2]);
+            check (fromB[1] > carrier * 0.1f && fromB[2] > carrier * 0.02f, "FM from the other oscillator adds harmonics, even when that oscillator is turned down");
+
+            const auto fromA = partials ([] (EngineParams& p)
+                                         {
+                                             p.oscA.level = 0.0f;
+                                             p.oscB.level = 1.0f;
+                                             p.oscB.xmodType = xmod::fm;
+                                             p.oscB.xmodSource = xmod::otherOsc;
+                                             p.oscB.xmodAmount = 0.5f;
+                                         }, { 220.0f, 440.0f });
+            check (fromA[0] > carrier * 0.2f && fromA[1] > carrier * 0.1f, "oscillator B is modulated by oscillator A in the same way");
+
+            const auto fromEngine = partials ([] (EngineParams& p)
+                                              {
+                                                  p.oscA.xmodType = xmod::fm;
+                                                  p.oscA.xmodSource = xmod::engine;
+                                                  p.oscA.xmodAmount = 0.6f;
+                                              }, { 220.0f, 440.0f });
+            check (fromEngine[1] > carrier * 0.03f, "the Balkan engine can modulate an oscillator while its own level is down");
+
+            // A sample that stands at one half turns the ringed oscillator down by half.
+            juce::AudioBuffer<float> flat (1, 4410);
+            for (int i = 0; i < flat.getNumSamples(); ++i)
+                flat.setSample (0, i, 0.5f);
+            const auto steady = SampleData::fromBuffer (flat, 44100.0, "steady");
+            const auto bySample = partials ([&steady] (EngineParams& p)
+                                            {
+                                                p.sampler.data = steady.get();
+                                                p.sampler.loop = sampler::loopForward;
+                                                p.oscA.xmodType = xmod::ring;
+                                                p.oscA.xmodSource = xmod::sampler;
+                                                p.oscA.xmodAmount = 1.0f;
+                                            }, { 220.0f });
+            check (near (bySample[0], carrier * 0.5f, carrier * 0.01f), "the sampler can modulate an oscillator while its own level is down");
+
+            const auto byMacro = partials ([] (EngineParams& p)
+                                           {
+                                               p.oscA.xmodType = xmod::fm;
+                                               p.oscA.xmodSource = xmod::otherOsc;
+                                               p.modMacros[0] = 0.5f;
+                                               p.slots[0] = { mod::srcMacro1, mod::dstOscAFm, 1.0f };
+                                           }, { 440.0f });
+            check (byMacro[0] > carrier * 0.1f && modDestFor (id::oscAXmodAmount) == mod::dstOscAFm && modDestFor (id::oscBXmodAmount) == mod::dstOscBFm,
+                   "the FM amount is a modulation destination");
+
+            // Both oscillators modulating each other at full depth, with noise in the loop, stay bounded.
+            EngineParams wild;
+            wild.oscA.level = 0.8f;
+            wild.oscB.level = 0.8f;
+            wild.oscA.unison = 7;
+            wild.oscA.width = 1.0f;
+            wild.oscA.xmodType = xmod::fm;
+            wild.oscA.xmodAmount = 1.0f;
+            wild.oscB.xmodType = xmod::fm;
+            wild.oscB.xmodAmount = 1.0f;
+            const auto cross = render (wild);
+            wild.oscA.xmodSource = xmod::noise;
+            wild.oscB.xmodType = xmod::ring;
+            wild.oscB.xmodSource = xmod::engine;
+            const auto mixed = render (wild);
+            check (cross.finite && mixed.finite && cross.peak > 0.02f && cross.peak < 4.0f && mixed.peak < 4.0f && cross.tailPeak < 0.001f && mixed.tailPeak < 0.001f,
+                   "oscillators that modulate each other at full depth stay bounded");
+        }
+
         // Formant and phaser types, the second filter and its routing. The note is A3, a sine at 220 Hz.
         {
             const float full = reference.peak;

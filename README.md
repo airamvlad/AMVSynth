@@ -12,6 +12,7 @@ What it does:
 - A third envelope (ENV 3) that is only a modulation source
 - Envelope times and the effects are modulation destinations too: amp and filter attack, decay and release, distortion drive and mix, gate depth, delay feedback, tone and mix, reverb size and mix
 - Warp on both wavetable oscillators (Bend +, Bend -, PWM, Sync, Mirror) with a WARP knob that can be modulated, and a 3D view of all frames of the table with the playing position marked
+- FM, ring and amplitude modulation of each wavetable oscillator by the other oscillator, the sub, the noise, the Balkan engine or the sampler. The modulator works even with its own level turned down, and the amount is a modulation destination
 - Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
 - Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar

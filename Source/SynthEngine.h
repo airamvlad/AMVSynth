@@ -61,6 +61,9 @@ struct OscParams
     float width = 0.0f;        // 0 = mono, 1 = unison copies spread fully left and right
     int warp = warp::off;      // how the phase is bent before the table is read
     float warpAmount = 0.0f;   // 0..1
+    int xmodType = xmod::off;  // FM, ring or amplitude modulation by another source
+    int xmodSource = xmod::otherOsc;
+    float xmodAmount = 0.0f;   // 0..1
 };
 
 /** Values read from the plugin parameters once per audio block. */
@@ -278,6 +281,7 @@ public:
                 (*osc)[0] = 0.0f;
             }
             subPhase = 0.0f;
+            lastOscA = 0.0f;
             noiseLp = 0.0f;
             lastFilterEnv = 0.0f;
             lastEnv3 = 0.0f;
@@ -387,6 +391,8 @@ public:
             modulated.oscB.pitch = ranged (base.oscB.pitch, dest[mod::dstOscBPitch], -24.0f, 24.0f);
             modulated.oscA.warpAmount = unit (base.oscA.warpAmount + dest[mod::dstOscAWarp]);
             modulated.oscB.warpAmount = unit (base.oscB.warpAmount + dest[mod::dstOscBWarp]);
+            modulated.oscA.xmodAmount = unit (base.oscA.xmodAmount + dest[mod::dstOscAFm]);
+            modulated.oscB.xmodAmount = unit (base.oscB.xmodAmount + dest[mod::dstOscBFm]);
             modulated.sampler.level = unit (base.sampler.level + dest[mod::dstSamplerLevel]);
             modulated.sampler.pitch = ranged (base.sampler.pitch, dest[mod::dstSamplerPitch], -24.0f, 24.0f);
             modulated.sampler.position = unit (base.sampler.position + dest[mod::dstGrainPosition]);
@@ -467,25 +473,35 @@ public:
             for (size_t r = 0; r < route.size(); ++r)
                 route[r] = p.filterRoute[r] != 0 ? 1u : 0u;
 
+        // A source that modulates an oscillator is worked out even when its own level is down.
+        const auto uses = [&p] (int source)
+        {
+            return (p.oscA.level > 0.0f && p.oscA.xmodType != xmod::off && p.oscA.xmodAmount > 0.0f && p.oscA.xmodSource == source)
+                   || (p.oscB.level > 0.0f && p.oscB.xmodType != xmod::off && p.oscB.xmodAmount > 0.0f && p.oscB.xmodSource == source);
+        };
+        const bool engineOn = p.engineLevel > 0.0f || uses (xmod::engine);
+
         ModelCoeffs mc;
-        if (p.engineLevel > 0.0f)
+        if (engineOn)
             prepareModel (mc, p, sr);
 
         const float chunkInc = midiToHz (currentPitch + bend + juce::jmax (modPitch, pitchTarget) + 1.0f) / sr;
         OscCoeffs oscA, oscB;
-        prepareOsc (oscA, p.oscA, chunkInc, p.userWave[0]);
-        prepareOsc (oscB, p.oscB, chunkInc, p.userWave[1]);
+        const bool aNeedsB = p.oscA.level > 0.0f && p.oscA.xmodType != xmod::off && p.oscA.xmodAmount > 0.0f && p.oscA.xmodSource == xmod::otherOsc;
+        const bool bNeedsA = p.oscB.level > 0.0f && p.oscB.xmodType != xmod::off && p.oscB.xmodAmount > 0.0f && p.oscB.xmodSource == xmod::otherOsc;
+        prepareOsc (oscA, p.oscA, chunkInc, p.userWave[0], bNeedsA);
+        prepareOsc (oscB, p.oscB, chunkInc, p.userWave[1], aNeedsB);
 
-        const bool subOn = p.subLevel > 0.0f, noiseOn = p.noiseLevel > 0.0f;
+        const bool subOn = p.subLevel > 0.0f || uses (xmod::sub), noiseOn = p.noiseLevel > 0.0f || uses (xmod::noise);
         const bool extras = oscA.on || oscB.on || subOn;
 
         // The sampler follows the key from its root note, or plays every key at the sample's own pitch.
-        const bool samplerOn = p.sampler.level > 0.0f && p.sampler.data != nullptr;
+        const bool samplerOn = (p.sampler.level > 0.0f || uses (xmod::sampler)) && p.sampler.data != nullptr;
         const float samplerTune = std::exp2 ((p.sampler.pitch + p.sampler.fineCents * 0.01f) / 12.0f);
         const float samplerRootHz = midiToHz ((float) p.sampler.rootNote);
 
         // Only spread unison and the sampler need a second filter; everything else is the same on both sides.
-        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide) || samplerOn;
+        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide) || (samplerOn && p.sampler.level > 0.0f);
         const float subRatio = p.subOctave >= 2 ? 0.25f : 0.5f;
         const float noiseCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (p.noiseColorHz, 0.45f * sr) / sr);
 
@@ -516,7 +532,8 @@ public:
 
             float s = 0.0f;
             float bus[2][2] {}; // [filter][left, right]
-            if (p.engineLevel > 0.0f)
+            float modulators[xmod::numSources] {}; // what each source gives an oscillator, at full level
+            if (engineOn)
             {
                 switch (p.model)
                 {
@@ -539,44 +556,60 @@ public:
                     case Model::voice:      s = renderVoice (pitch, sr, p, mc); break;
                 }
 
+                modulators[xmod::engine] = s;
                 s *= p.engineLevel;
                 bus[route[EngineParams::routeEngine]][0] += s;
                 bus[route[EngineParams::routeEngine]][1] += s;
-            }
-
-            if (extras)
-            {
-                const float inc = midiToHz (pitch) / sr;
-
-                if (oscA.on)
-                    renderOsc (oscPhasesA, oscA, inc, bus[route[EngineParams::routeOscA]][0], bus[route[EngineParams::routeOscA]][1]);
-                if (oscB.on)
-                    renderOsc (oscPhasesB, oscB, inc, bus[route[EngineParams::routeOscB]][0], bus[route[EngineParams::routeOscB]][1]);
-
-                if (subOn)
-                {
-                    const float subInc = inc * subRatio;
-                    const float sine = std::sin (subPhase * juce::MathConstants<float>::twoPi);
-                    const float sub = (sine + (pulse (subPhase, subInc, 0.5f) * 0.7f - sine) * p.subShape) * p.subLevel * 0.8f;
-                    bus[route[EngineParams::routeSub]][0] += sub;
-                    bus[route[EngineParams::routeSub]][1] += sub;
-                    advance (subPhase, subInc);
-                }
             }
 
             if (samplerOn)
             {
                 // Without key tracking only bends, vibrato and modulation move the pitch.
                 const float ratio = p.sampler.keyTrack ? midiToHz (pitch) / samplerRootHz : std::exp2 ((pitch - currentPitch) / 12.0f);
-                samplerVoice.process (p.sampler, ratio * samplerTune, sr, bus[route[EngineParams::routeSampler]][0], bus[route[EngineParams::routeSampler]][1]);
+                samplerVoice.process (p.sampler, ratio * samplerTune, sr, bus[route[EngineParams::routeSampler]][0], bus[route[EngineParams::routeSampler]][1],
+                                      &modulators[xmod::sampler]);
             }
 
             if (noiseOn)
             {
                 noiseLp += (noise() - noiseLp) * noiseCoeff;
+                modulators[xmod::noise] = noiseLp;
                 const float hiss = noiseLp * p.noiseLevel * 0.7f;
                 bus[route[EngineParams::routeNoise]][0] += hiss;
                 bus[route[EngineParams::routeNoise]][1] += hiss;
+            }
+
+            if (extras)
+            {
+                const float inc = midiToHz (pitch) / sr;
+
+                if (subOn)
+                {
+                    const float subInc = inc * subRatio;
+                    const float sine = std::sin (subPhase * juce::MathConstants<float>::twoPi);
+                    const float wave = sine + (pulse (subPhase, subInc, 0.5f) * 0.7f - sine) * p.subShape;
+                    const float sub = wave * p.subLevel * 0.8f;
+                    modulators[xmod::sub] = wave;
+                    bus[route[EngineParams::routeSub]][0] += sub;
+                    bus[route[EngineParams::routeSub]][1] += sub;
+                    advance (subPhase, subInc);
+                }
+
+                // B comes first, so A can be modulated by what B does in this very sample; B hears
+                // A one sample late, which also lets the two modulate each other.
+                float rawB = 0.0f;
+                if (oscB.on)
+                {
+                    modulators[xmod::otherOsc] = lastOscA;
+                    rawB = renderOsc (oscPhasesB, oscB, inc, modulators[oscB.xmodSource], bus[route[EngineParams::routeOscB]][0],
+                                      bus[route[EngineParams::routeOscB]][1]);
+                }
+                if (oscA.on)
+                {
+                    modulators[xmod::otherOsc] = rawB;
+                    lastOscA = renderOsc (oscPhasesA, oscA, inc, modulators[oscA.xmodSource], bus[route[EngineParams::routeOscA]][0],
+                                          bus[route[EngineParams::routeOscA]][1]);
+                }
             }
 
             const float gain = ampEnv.getNextSample() * (0.35f + 0.65f * velocity) * modGain;
@@ -691,12 +724,14 @@ private:
         bool wide = false;
         int warp = warp::off;
         float warpValue = 0.0f;       // exponent, width or ratio, depending on the mode
+        int xmodType = xmod::off, xmodSource = xmod::otherOsc;
+        float xmodDepth = 0.0f;       // FM: cycles of phase at full swing; ring and AM: 0..1
     };
 
     /** `noteInc` is the phase increment of the note itself, with a little headroom. */
-    static void prepareOsc (OscCoeffs& oc, const OscParams& op, float noteInc, const UserWavetable* user)
+    static void prepareOsc (OscCoeffs& oc, const OscParams& op, float noteInc, const UserWavetable* user, bool asModulator = false)
     {
-        oc.on = op.level > 0.0f;
+        oc.on = op.level > 0.0f || asModulator;
         if (! oc.on)
             return;
 
@@ -734,6 +769,16 @@ private:
             case warp::mirror:   oc.warpValue = amount; steepest = 1.0f + amount; break;
             default: break;
         }
+
+        // FM and ring modulation add harmonics above those of the table, so a duller one is picked.
+        const float xAmount = juce::jlimit (0.0f, 1.0f, op.xmodAmount);
+        oc.xmodType = xAmount > 0.0005f ? juce::jlimit (0, (int) xmod::numTypes - 1, op.xmodType) : (int) xmod::off;
+        oc.xmodSource = juce::jlimit (0, (int) xmod::numSources - 1, op.xmodSource);
+        oc.xmodDepth = oc.xmodType == xmod::fm ? 2.0f * xAmount * xAmount : xAmount;
+        if (oc.xmodType == xmod::fm)
+            steepest *= 1.0f + 6.0f * oc.xmodDepth;
+        else if (oc.xmodType == xmod::ring)
+            steepest *= 1.0f + xAmount;
 
         const auto& bank = WavetableBank::get();
         const int level = WavetableBank::levelFor (noteInc * highest * steepest);
@@ -780,21 +825,31 @@ private:
         }
     }
 
-    static void renderOsc (OscPhases& phases, const OscCoeffs& oc, float inc, float& left, float& right) noexcept
+    /** Adds the oscillator to `left` and `right` and returns it at full level, for use as a
+        modulator. `modulator` is the source that acts on it, about -1..1. */
+    static float renderOsc (OscPhases& phases, const OscCoeffs& oc, float inc, float modulator, float& left, float& right) noexcept
     {
-        float sumLeft = 0.0f, sumRight = 0.0f;
+        float sumLeft = 0.0f, sumRight = 0.0f, sum = 0.0f;
+        modulator = juce::jlimit (-2.0f, 2.0f, modulator);
+        const float shift = oc.xmodType == xmod::fm ? modulator * oc.xmodDepth : 0.0f;
+        const float level = oc.xmodType == xmod::ring ? 1.0f - oc.xmodDepth + oc.xmodDepth * modulator
+                          : oc.xmodType == xmod::am   ? 1.0f - oc.xmodDepth * 0.5f * (1.0f - juce::jlimit (-1.0f, 1.0f, modulator))
+                                                      : 1.0f;
 
         for (int i = 0; i < oc.count; ++i)
         {
             float& phase = phases[(size_t) i];
             float window = 1.0f;
-            const float read = oc.warp == warp::off ? phase : warpPhase (phase, oc.warp, oc.warpValue, window);
+            float moved = phase + shift;
+            moved -= std::floor (moved);
+            const float read = oc.warp == warp::off ? moved : warpPhase (moved, oc.warp, oc.warpValue, window);
             const float pos = read * (float) WavetableBank::tableSize;
             const int index = juce::jlimit (0, WavetableBank::tableSize - 1, (int) pos);
             const float frac = pos - (float) index;
             const float a = oc.waveA[index] + (oc.waveA[index + 1] - oc.waveA[index]) * frac;
             const float b = oc.waveB[index] + (oc.waveB[index + 1] - oc.waveB[index]) * frac;
             const float v = (a + (b - a) * oc.frameMix) * window;
+            sum += v;
             sumLeft += v * oc.panLeft[i];
             sumRight += v * oc.panRight[i];
 
@@ -803,8 +858,9 @@ private:
                 phase -= 1.0f;
         }
 
-        left += sumLeft * oc.gain;
-        right += sumRight * oc.gain;
+        left += sumLeft * oc.gain * level;
+        right += sumRight * oc.gain * level;
+        return sum * level / (float) oc.count;
     }
 
     void setNote (const NoteEvent& e)
@@ -1547,6 +1603,7 @@ private:
     float drumTime = 0.0f, drumEnv = 0.0f, drumDrop = 0.0f;
 
     OscPhases oscPhasesA {}, oscPhasesB {};
+    float lastOscA = 0.0f;
     float subPhase = 0.0f, noiseLp = 0.0f;
 
     float lastFilterEnv = 0.0f, lastEnv3 = 0.0f, modPitch = 0.0f, modGain = 1.0f;
