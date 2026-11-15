@@ -50,13 +50,71 @@ enum Dest
     dstOscBDetune,
     dstOscAPitch,
     dstOscBPitch,
+    dstOscAWarp,
+    dstOscBWarp,
     numDests
 };
 
 inline constexpr int numSlots = 8;
 inline constexpr int numLfos = 2;
 inline constexpr int numMacros = 4;
+
+/** How a slot reads its source: as the source is by nature, always upwards only (0..1), or
+    always swinging both ways (-1..1). */
+enum Polarity
+{
+    polarityAuto = 0,
+    polarityUnipolar,
+    polarityBipolar
+};
+
+/** LFOs and timbre swing both ways by nature; the other sources only go up from zero. */
+inline bool isBipolarSource (int source) noexcept
+{
+    return source == srcLfo1 || source == srcLfo2 || source == srcTimbre;
+}
+
+inline bool isBipolar (int source, int polarity) noexcept
+{
+    return polarity == polarityAuto ? isBipolarSource (source) : polarity == polarityBipolar;
+}
+
+/** The value of a source as a slot with this polarity sees it. */
+inline float shaped (float value, int source, int polarity) noexcept
+{
+    if (polarity == polarityUnipolar && isBipolarSource (source))
+        return 0.5f * (value + 1.0f);
+    if (polarity == polarityBipolar && ! isBipolarSource (source))
+        return 2.0f * value - 1.0f;
+    return value;
+}
 } // namespace mod
+
+inline const std::array<const char*, 3>& getModPolarities()
+{
+    static const std::array<const char*, 3> names { "Auto", "Unipolar", "Bipolar" };
+    return names;
+}
+
+namespace warp
+{
+enum Mode
+{
+    off = 0,
+    bendUp,
+    bendDown,
+    pwm,
+    sync,
+    mirror,
+    numModes
+};
+} // namespace warp
+
+inline const std::array<const char*, warp::numModes>& getWarpModes()
+{
+    static const std::array<const char*, warp::numModes> names { "Warp Off", "Bend +", "Bend -", "PWM", "Sync", "Mirror" };
+    return names;
+}
 
 inline const std::array<const char*, mod::numSources>& getModSources()
 {
@@ -71,7 +129,8 @@ inline const std::array<const char*, mod::numDests>& getModDests()
                                                                 "Osc A Level", "Osc B Level", "Engine Level", "Noise Level", "Volume",
                                                                 "Filter Env Amount", "Sub Level", "Vibrato Depth", "Vibrato Rate",
                                                                 "Engine Knob 1", "Engine Knob 2", "Engine Knob 3", "Engine Knob 4",
-                                                                "Osc A Detune", "Osc B Detune", "Osc A Pitch", "Osc B Pitch" };
+                                                                "Osc A Detune", "Osc B Detune", "Osc A Pitch", "Osc B Pitch",
+                                                                "Osc A Warp", "Osc B Warp" };
     return names;
 }
 
@@ -108,6 +167,7 @@ struct ModSlot
     int source = mod::srcNone;
     int dest = mod::dstPitch;
     float amount = 0.0f;  // -1..1
+    int polarity = mod::polarityAuto;
 };
 
 /** A free-running or tempo-synced LFO, shared by all voices. Output is -1..1. */

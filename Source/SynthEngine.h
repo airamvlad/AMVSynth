@@ -58,6 +58,8 @@ struct OscParams
     float fineCents = 0.0f;
     float level = 0.0f;
     float width = 0.0f;        // 0 = mono, 1 = unison copies spread fully left and right
+    int warp = warp::off;      // how the phase is bent before the table is read
+    float warpAmount = 0.0f;   // 0..1
 };
 
 /** Values read from the plugin parameters once per audio block. */
@@ -322,7 +324,7 @@ public:
             float dest[mod::numDests] {};
             for (const auto& slot : base.slots)
                 if (slot.source > mod::srcNone && slot.source < mod::numSources && slot.dest >= 0 && slot.dest < mod::numDests)
-                    dest[slot.dest] += src[slot.source] * slot.amount;
+                    dest[slot.dest] += mod::shaped (src[slot.source], slot.source, slot.polarity) * slot.amount;
 
             const auto unit = [] (float v) { return juce::jlimit (0.0f, 1.0f, v); };
             modulated = base;
@@ -348,6 +350,8 @@ public:
             modulated.oscB.detuneCents = ranged (base.oscB.detuneCents, dest[mod::dstOscBDetune], 0.0f, 100.0f);
             modulated.oscA.pitch = ranged (base.oscA.pitch, dest[mod::dstOscAPitch], -24.0f, 24.0f);
             modulated.oscB.pitch = ranged (base.oscB.pitch, dest[mod::dstOscBPitch], -24.0f, 24.0f);
+            modulated.oscA.warpAmount = unit (base.oscA.warpAmount + dest[mod::dstOscAWarp]);
+            modulated.oscB.warpAmount = unit (base.oscB.warpAmount + dest[mod::dstOscBWarp]);
 
             for (int i = 0; i < 4; ++i)
                 if (std::abs (dest[mod::dstEngine1 + i]) > 0.0f)
@@ -586,6 +590,8 @@ private:
         float ratio[maxUnison] {};    // frequency of each copy relative to the note
         float panLeft[maxUnison] {}, panRight[maxUnison] {};
         bool wide = false;
+        int warp = warp::off;
+        float warpValue = 0.0f;       // exponent, width or ratio, depending on the mode
     };
 
     /** `noteInc` is the phase increment of the note itself, with a little headroom. */
@@ -615,8 +621,23 @@ private:
 
         oc.wide = oc.count > 1 && op.width > 0.001f;
 
+        // Warping squeezes the wave, which raises its harmonics; `steepest` is by how much at most,
+        // so a table with fewer harmonics is picked.
+        const float amount = juce::jlimit (0.0f, 1.0f, op.warpAmount);
+        float steepest = 1.0f;
+        oc.warp = amount > 0.0005f ? juce::jlimit (0, (int) warp::numModes - 1, op.warp) : (int) warp::off;
+        switch (oc.warp)
+        {
+            case warp::bendUp:
+            case warp::bendDown: oc.warpValue = std::exp2 (2.0f * amount); steepest = oc.warpValue; break;
+            case warp::pwm:      oc.warpValue = 1.0f - 0.9f * amount; steepest = 1.0f / oc.warpValue; break;
+            case warp::sync:     oc.warpValue = 1.0f + 7.0f * amount; steepest = oc.warpValue; break;
+            case warp::mirror:   oc.warpValue = amount; steepest = 1.0f + amount; break;
+            default: break;
+        }
+
         const auto& bank = WavetableBank::get();
-        const int level = WavetableBank::levelFor (noteInc * highest);
+        const int level = WavetableBank::levelFor (noteInc * highest * steepest);
         const float framePos = juce::jlimit (0.0f, 1.0f, op.position) * (float) (WavetableBank::numFrames - 1);
         const int frame = juce::jmin ((int) framePos, WavetableBank::numFrames - 2);
 
@@ -638,6 +659,28 @@ private:
         oc.gain = op.level * 0.75f / std::sqrt ((float) oc.count);
     }
 
+    /** Where in the table a warped oscillator reads for a phase of 0..1. `window` is a gain that
+        fades the end of the cycle where the mode would otherwise jump. */
+    static float warpPhase (float phase, int mode, float value, float& window) noexcept
+    {
+        switch (mode)
+        {
+            case warp::bendUp:   return std::pow (phase, value);                 // the wave is pushed towards the end
+            case warp::bendDown: return 1.0f - std::pow (1.0f - phase, value);   // and towards the start
+            case warp::pwm:      return juce::jmin (1.0f, phase / value);        // squeezed, then held
+            case warp::mirror:   return phase + ((phase < 0.5f ? 2.0f * phase : 2.0f - 2.0f * phase) - phase) * value;
+            case warp::sync:
+            {
+                // The wave restarts with every cycle of the note, like a synced oscillator.
+                const float p2 = phase * phase, p4 = p2 * p2;
+                window = 1.0f - p4 * p4;
+                const float fast = phase * value;
+                return fast - std::floor (fast);
+            }
+            default: return phase;
+        }
+    }
+
     static void renderOsc (OscPhases& phases, const OscCoeffs& oc, float inc, float& left, float& right) noexcept
     {
         float sumLeft = 0.0f, sumRight = 0.0f;
@@ -645,12 +688,14 @@ private:
         for (int i = 0; i < oc.count; ++i)
         {
             float& phase = phases[(size_t) i];
-            const float pos = phase * (float) WavetableBank::tableSize;
-            const int index = juce::jmin ((int) pos, WavetableBank::tableSize - 1);
+            float window = 1.0f;
+            const float read = oc.warp == warp::off ? phase : warpPhase (phase, oc.warp, oc.warpValue, window);
+            const float pos = read * (float) WavetableBank::tableSize;
+            const int index = juce::jlimit (0, WavetableBank::tableSize - 1, (int) pos);
             const float frac = pos - (float) index;
             const float a = oc.waveA[index] + (oc.waveA[index + 1] - oc.waveA[index]) * frac;
             const float b = oc.waveB[index] + (oc.waveB[index + 1] - oc.waveB[index]) * frac;
-            const float v = a + (b - a) * oc.frameMix;
+            const float v = (a + (b - a) * oc.frameMix) * window;
             sumLeft += v * oc.panLeft[i];
             sumRight += v * oc.panRight[i];
 

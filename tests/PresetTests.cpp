@@ -99,6 +99,43 @@ int main()
         file.deleteFile();
     }
 
+    // A table made in the editor is heard, saved with the project and exported as a WAV that imports back.
+    {
+        std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());
+        auto* first = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        const int size = amv::UserWavetable::tableSize, count = amv::UserWavetable::numFrames;
+        std::vector<float> frames ((size_t) (size * count));
+        for (int f = 0; f < count; ++f)
+            for (int i = 0; i < size; ++i)
+                frames[(size_t) (f * size + i)] = std::sin (juce::MathConstants<float>::twoPi * (float) ((f + 1) * i) / (float) size);
+
+        bool ok = first != nullptr;
+        if (ok)
+        {
+            first->setUserWavetableFrames (0, frames, "drawn", true);
+            ok = first->getUserWavetable (0) != nullptr && first->getUserWavetable (0)->getName() == "drawn";
+        }
+
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("amvsynth-export-test.wav");
+        file.deleteFile();
+        ok = ok && first->exportWavetable (0, file) && ! first->exportWavetable (1, file.getSiblingFile ("amvsynth-none.wav"))
+                 && first->importWavetable (1, file) && first->getUserWavetable (1) != nullptr;
+        for (int f = 0; ok && f < count; f += 5)
+            for (int i = 0; ok && i < size; ++i)
+                ok = std::abs (first->getUserWavetable (1)->wave (f, 0)[i] - first->getUserWavetable (0)->wave (f, 0)[i]) < 1.0e-4f;
+
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
+        other->setStateInformation (state.getData(), (int) state.getSize());
+        auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
+        ok = ok && second != nullptr && second->getUserWavetable (0) != nullptr && second->getUserWavetable (0)->getName() == "drawn";
+
+        std::printf ("%s  an edited wavetable is saved with the project and exports to a WAV that imports back\n", ok ? "ok  " : "FAIL");
+        failures += ok ? 0 : 1;
+        file.deleteFile();
+    }
+
     std::printf ("%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

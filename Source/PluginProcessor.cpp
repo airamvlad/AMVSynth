@@ -14,7 +14,7 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
     for (int i = 0; i < mod::numMacros; ++i)
         macroRefs[(size_t) i] = ref (id::macro (i));
     for (int i = 0; i < mod::numSlots; ++i)
-        slotRefs[(size_t) i] = { ref (id::slot (i, "Source")), ref (id::slot (i, "Dest")), ref (id::slot (i, "Amount")) };
+        slotRefs[(size_t) i] = { ref (id::slot (i, "Source")), ref (id::slot (i, "Dest")), ref (id::slot (i, "Amount")), ref (id::slot (i, "Polarity")) };
 
     const auto& knobIds = getEngineKnobIds();
     for (size_t m = 0; m < knobIds.size(); ++m)
@@ -96,6 +96,10 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
                value (id::oscADetune), value (id::oscAPitch), value (id::oscAFine), value (id::oscALevel), value (id::oscAWidth) };
     p.oscB = { juce::roundToInt (value (id::oscBTable)), value (id::oscBPos), juce::roundToInt (value (id::oscBUnison)),
                value (id::oscBDetune), value (id::oscBPitch), value (id::oscBFine), value (id::oscBLevel), value (id::oscBWidth) };
+    p.oscA.warp = juce::roundToInt (value (id::oscAWarp));
+    p.oscA.warpAmount = value (id::oscAWarpAmount);
+    p.oscB.warp = juce::roundToInt (value (id::oscBWarp));
+    p.oscB.warpAmount = value (id::oscBWarpAmount);
     p.subLevel = value (id::subLevel);
     p.subOctave = juce::roundToInt (value (id::subOctave)) + 1;
     p.subShape = value (id::subShape);
@@ -108,7 +112,8 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     for (size_t i = 0; i < macroRefs.size(); ++i)
         p.modMacros[i] = macroRefs[i]->load();
     for (size_t i = 0; i < slotRefs.size(); ++i)
-        p.slots[i] = { juce::roundToInt (slotRefs[i].source->load()), juce::roundToInt (slotRefs[i].dest->load()), slotRefs[i].amount->load() };
+        p.slots[i] = { juce::roundToInt (slotRefs[i].source->load()), juce::roundToInt (slotRefs[i].dest->load()), slotRefs[i].amount->load(),
+                       juce::roundToInt (slotRefs[i].polarity->load()) };
 
     p.tone = value (id::tone);
     p.pulseWidth = value (id::pulseWidth);
@@ -292,13 +297,52 @@ const char* const userWaveName[2] { "userWaveAName", "userWaveBName" };
 
 void AMVSynthAudioProcessor::setUserWavetable (int osc, std::unique_ptr<amv::UserWavetable> table)
 {
-    activeUserWave[(size_t) osc].store (table.get(), std::memory_order_release);
-    if (table != nullptr)
-        userWaveStore.push_back (std::move (table));
+    const auto now = juce::jmax<juce::uint32> (1, juce::Time::getMillisecondCounter());
+    const auto* previous = activeUserWave[(size_t) osc].exchange (table.get(), std::memory_order_acq_rel);
 
-    // Old tables go once they are several imports behind; the audio thread has long let go of them.
-    while (userWaveStore.size() > 8)
-        userWaveStore.erase (userWaveStore.begin());
+    for (auto& stored : userWaveStore)
+        if (stored.table.get() == previous && previous != nullptr)
+            stored.retiredAt = now;
+
+    if (table != nullptr)
+        userWaveStore.push_back ({ std::move (table), 0 });
+
+    // A replaced table is thrown away half a second later; the audio thread only holds one for a block.
+    userWaveStore.erase (std::remove_if (userWaveStore.begin(), userWaveStore.end(),
+                                         [now] (const StoredWave& stored) { return stored.retiredAt != 0 && now - stored.retiredAt > 500; }),
+                         userWaveStore.end());
+}
+
+void AMVSynthAudioProcessor::setUserWavetableFrames (int osc, std::vector<float> frames, const juce::String& name, bool save)
+{
+    for (auto& v : frames)
+        if (! std::isfinite (v))
+            v = 0.0f;
+
+    setUserWavetable (osc, std::make_unique<amv::UserWavetable> (std::move (frames), name));
+    if (save)
+        storeUserWavetables();
+}
+
+bool AMVSynthAudioProcessor::exportWavetable (int osc, const juce::File& file) const
+{
+    const auto* table = activeUserWave[(size_t) osc].load();
+    if (table == nullptr)
+        return false;
+
+    // The table as it plays: without its offset and at full level.
+    juce::AudioBuffer<float> audio (1, amv::UserWavetable::sourceSize);
+    for (int frame = 0; frame < amv::UserWavetable::numFrames; ++frame)
+        audio.copyFrom (0, frame * amv::UserWavetable::tableSize, table->wave (frame, 0), amv::UserWavetable::tableSize);
+
+    file.deleteFile();
+    juce::WavAudioFormat wav;
+    if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+        if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (48000.0).withNumChannels (1).withBitsPerSample (32)
+                                                           .withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint)))
+            return writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+
+    return false;
 }
 
 bool AMVSynthAudioProcessor::importWavetable (int osc, const juce::File& file)

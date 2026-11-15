@@ -46,6 +46,14 @@ public:
     /** Reads an audio file as the "User" wavetable of oscillator 0 (A) or 1 (B). Message thread only. */
     bool importWavetable (int osc, const juce::File&);
 
+    /** Makes 16 cycles of 2048 samples the "User" wavetable of an oscillator, as the wavetable
+        editor does while drawing. With `save` off the project state is not updated yet; call
+        it again with `save` on when the edit is finished. Message thread only. */
+    void setUserWavetableFrames (int osc, std::vector<float> frames, const juce::String& name, bool save);
+
+    /** Writes the User wavetable of an oscillator as a WAV file of 16 frames. */
+    bool exportWavetable (int osc, const juce::File&) const;
+
     /** The imported wavetable of an oscillator, or null. Message thread only. */
     const amv::UserWavetable* getUserWavetable (int osc) const noexcept { return activeUserWave[(size_t) osc].load(); }
 
@@ -77,11 +85,16 @@ private:
     void storeUserWavetables();
     void restoreUserWavetables();
     std::array<std::atomic<const amv::UserWavetable*>, 2> activeUserWave {};
-    std::vector<std::unique_ptr<amv::UserWavetable>> userWaveStore;
+    struct StoredWave
+    {
+        std::unique_ptr<amv::UserWavetable> table;
+        juce::uint32 retiredAt = 0; // 0 while it is in use
+    };
+    std::vector<StoredWave> userWaveStore;
 
     // The numbered modulation parameters are looked up once, their names are built at run time.
     struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; };
-    struct SlotRefs { std::atomic<float>* source; std::atomic<float>* dest; std::atomic<float>* amount; };
+    struct SlotRefs { std::atomic<float>* source; std::atomic<float>* dest; std::atomic<float>* amount; std::atomic<float>* polarity; };
     std::array<LfoRefs, amv::mod::numLfos> lfoRefs {};
     std::array<std::atomic<float>*, amv::mod::numMacros> macroRefs {};
     std::array<SlotRefs, amv::mod::numSlots> slotRefs {};
