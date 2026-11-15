@@ -72,6 +72,14 @@ private:
         bool active = false;
     };
 
+    /** Stereo output level in decibels, with a slow fall and a clip light. */
+    struct LevelMeter final : public juce::Component
+    {
+        void paint (juce::Graphics&) override;
+        std::array<float, 2> level {}; // linear, already smoothed
+        int clipHold = 0;
+    };
+
     struct Choice
     {
         juce::ComboBox box;
@@ -130,6 +138,7 @@ private:
 
     PatternDisplay patternDisplay;
     WaveDisplay waveA, waveB;
+    LevelMeter levelMeter;
     juce::MidiKeyboardComponent keyboard;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessorEditor)

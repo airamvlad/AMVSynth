@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -21,9 +22,13 @@ jobs:
           - name: Windows
             os: windows-latest
             configure: ""
+            upload: |
+              build/AMVSynth_artefacts/Release/VST3
+              build/AMVSynth_artefacts/Release/Standalone
           - name: macOS
             os: macos-latest
             configure: -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+            upload: AMVSynth-macOS.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -37,12 +42,43 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # Artifacts drop file permissions, which breaks the macOS app, so the macOS build is zipped first.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd build/AMVSynth_artefacts/Release
+          zip -r -y "$GITHUB_WORKSPACE/AMVSynth-macOS.zip" VST3 AU Standalone
+
       - name: Upload plugin
         uses: actions/upload-artifact@v4
         with:
           name: AMVSynth-${{ matrix.name }}
-          path: |
-            build/AMVSynth_artefacts/Release/VST3
-            build/AMVSynth_artefacts/Release/AU
-            build/AMVSynth_artefacts/Release/Standalone
+          path: ${{ matrix.upload }}
           if-no-files-found: error
+
+  # Pushing a tag such as v1.0.0 publishes a release with both builds attached.
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package
+        run: |
+          cd artifacts
+          (cd AMVSynth-Windows && zip -r ../AMVSynth-Windows.zip .)
+          mv AMVSynth-macOS/AMVSynth-macOS.zip AMVSynth-macOS.zip
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" artifacts/AMVSynth-Windows.zip artifacts/AMVSynth-macOS.zip
+          --repo "$GITHUB_REPOSITORY" --title "AMVSynth $GITHUB_REF_NAME" --generate-notes

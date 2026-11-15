@@ -42,6 +42,9 @@ public:
     bool savePresetFile (const juce::File&);
     bool loadPresetFile (const juce::File&);
 
+    /** Highest output level since the editor last read it; the editor resets it to zero. */
+    std::array<std::atomic<float>, 2> outputPeak {};
+
     juce::AudioProcessorValueTreeState apvts;
     juce::MidiKeyboardState keyboardState;
 
