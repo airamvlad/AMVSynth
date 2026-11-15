@@ -155,6 +155,29 @@ inline constexpr auto oscAPitch = "oscAPitch";
 inline constexpr auto oscAFine = "oscAFine";
 inline constexpr auto oscALevel = "oscALevel";
 inline constexpr auto oscAWidth = "oscAWidth";
+inline constexpr auto smpLevel = "smpLevel";
+inline constexpr auto smpMode = "smpMode";
+inline constexpr auto smpPitch = "smpPitch";
+inline constexpr auto smpFine = "smpFine";
+inline constexpr auto smpRoot = "smpRoot";
+inline constexpr auto smpKeyTrack = "smpKeyTrack";
+inline constexpr auto smpPan = "smpPan";
+inline constexpr auto smpReverse = "smpReverse";
+inline constexpr auto smpStart = "smpStart";
+inline constexpr auto smpEnd = "smpEnd";
+inline constexpr auto smpLoop = "smpLoop";
+inline constexpr auto smpLoopStart = "smpLoopStart";
+inline constexpr auto smpLoopEnd = "smpLoopEnd";
+inline constexpr auto smpCrossfade = "smpCrossfade";
+inline constexpr auto smpPosition = "smpPosition";
+inline constexpr auto smpGrainSize = "smpGrainSize";
+inline constexpr auto smpDensity = "smpDensity";
+inline constexpr auto smpSpray = "smpSpray";
+inline constexpr auto smpPitchSpray = "smpPitchSpray";
+inline constexpr auto smpScan = "smpScan";
+inline constexpr auto smpShape = "smpShape";
+inline constexpr auto smpSpread = "smpSpread";
+inline constexpr auto smpRevChance = "smpRevChance";
 inline constexpr auto oscAWarp = "oscAWarp";
 inline constexpr auto oscAWarpAmount = "oscAWarpAmount";
 inline constexpr auto oscBWarp = "oscBWarp";
@@ -214,6 +237,9 @@ inline int modDestFor (const juce::String& paramId)
         { id::oscADetune, mod::dstOscADetune }, { id::oscBDetune, mod::dstOscBDetune },
         { id::oscAPitch, mod::dstOscAPitch }, { id::oscBPitch, mod::dstOscBPitch },
         { id::oscAWarpAmount, mod::dstOscAWarp }, { id::oscBWarpAmount, mod::dstOscBWarp },
+        { id::smpLevel, mod::dstSamplerLevel }, { id::smpPitch, mod::dstSamplerPitch }, { id::smpPosition, mod::dstGrainPosition },
+        { id::smpGrainSize, mod::dstGrainSize }, { id::smpDensity, mod::dstGrainDensity }, { id::smpSpray, mod::dstGrainSpray },
+        { id::smpScan, mod::dstGrainScan },
         { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
         { id::vibDepth, mod::dstVibrato }, { id::vibRate, mod::dstVibRate }, { id::level, mod::dstVolume },
     };
@@ -394,6 +420,33 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::oscAWarpAmount, "Osc A Warp", Range (0.0f, 1.0f), 0.0f);
     addChoice (id::oscBWarp, "Osc B Warp Mode", warpModes, 0);
     add (id::oscBWarpAmount, "Osc B Warp", Range (0.0f, 1.0f), 0.0f);
+
+    // Sampler
+    add (id::smpLevel, "Sampler Level", Range (0.0f, 1.0f), 0.0f);
+    addChoice (id::smpMode, "Sampler Mode", { "Classic", "Granular" }, 0);
+    add (id::smpPitch, "Sampler Pitch", Range (-24.0f, 24.0f, 1.0f), 0.0f, "st");
+    add (id::smpFine, "Sampler Fine", Range (-100.0f, 100.0f), 0.0f, "ct");
+    layout.add (std::make_unique<Float> (juce::ParameterID { id::smpRoot, 1 }, "Sampler Root Note", Range (0.0f, 127.0f, 1.0f), 60.0f,
+                                         juce::AudioParameterFloatAttributes()
+                                             .withStringFromValueFunction ([] (float v, int) { return juce::MidiMessage::getMidiNoteName (juce::roundToInt (v), true, true, 3); })));
+    addBool (id::smpKeyTrack, "Sampler Key Track", true);
+    add (id::smpPan, "Sampler Pan", Range (-1.0f, 1.0f), 0.0f);
+    addBool (id::smpReverse, "Sampler Reverse", false);
+    add (id::smpStart, "Sampler Start", Range (0.0f, 1.0f), 0.0f);
+    add (id::smpEnd, "Sampler End", Range (0.0f, 1.0f), 1.0f);
+    addChoice (id::smpLoop, "Sampler Loop", { "Loop Off", "Loop", "Ping Pong" }, 0);
+    add (id::smpLoopStart, "Sampler Loop Start", Range (0.0f, 1.0f), 0.0f);
+    add (id::smpLoopEnd, "Sampler Loop End", Range (0.0f, 1.0f), 1.0f);
+    add (id::smpCrossfade, "Sampler Loop Crossfade", Range (0.0f, 1.0f), 0.0f);
+    add (id::smpPosition, "Grain Position", Range (0.0f, 1.0f), 0.0f);
+    add (id::smpGrainSize, "Grain Size", skewed (5.0f, 500.0f, 80.0f), 80.0f, "ms");
+    add (id::smpDensity, "Grain Density", skewed (1.0f, 100.0f, 20.0f), 20.0f, "/s");
+    add (id::smpSpray, "Grain Spray", Range (0.0f, 1.0f), 0.1f);
+    add (id::smpPitchSpray, "Grain Pitch Spray", skewed (0.0f, 12.0f, 2.0f), 0.0f, "st");
+    add (id::smpScan, "Grain Scan", Range (-2.0f, 2.0f), 0.0f);
+    add (id::smpShape, "Grain Shape", Range (0.0f, 1.0f), 0.5f);
+    add (id::smpSpread, "Grain Spread", Range (0.0f, 1.0f), 0.5f);
+    add (id::smpRevChance, "Grain Reverse", Range (0.0f, 1.0f), 0.0f);
 
     addChoice (id::oscBTable, "Osc B Table", tableNames, 1);
     add (id::oscBPos, "Osc B Position", Range (0.0f, 1.0f), 0.4f);

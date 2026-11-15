@@ -1,6 +1,6 @@
 # AMVSynth
 
-A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytrance. All sound is synthesized (wavetables and physical modelling), with no samples.
+A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytrance. The instruments are synthesized (wavetables and physical modelling), with no sample library; a sampler with a granular mode is there for your own recordings.
 
 What it does:
 
@@ -16,6 +16,12 @@ What it does:
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Pythagorean tuning (all twelve keys from pure fifths on the chosen root) in the same scale list
 - Wavetable editor on the WAVE page: draw each of the 16 frames by hand (free or on a step grid), build it from 48 harmonic bars, start from basic shapes or a copy of a built-in table, smooth, normalize, invert, reverse, copy and paste frames, fill the table, morph from the first frame to the selected one, undo, and export the result as a WAV
+- Sampler on the SAMPLE page, mixed with the oscillators and the Balkan engine before the filter. Load or drop a WAV, AIFF, FLAC, MP3 or OGG file (up to 60 seconds); it is saved inside the project as FLAC
+  - Classic mode: root note, key tracking, start and end, forward and ping pong loops with a crossfade, reverse, pitch, fine and pan
+  - Granular mode: grain position, size, density, position spray, pitch spray, shape, stereo spread, reverse chance, and SCAN, which moves the position on its own so the sample can be frozen, stretched or played backwards at any pitch
+  - Markers are dragged in the wave display, which also shows where the playing note is reading
+  - Tools: normalize, crop, fade edges, find the root note from the pitch, and cut single cycles into the User wavetable of oscillator A or B
+  - Sampler level and pitch and the grain position, size, density, spray and scan are modulation destinations
 - Import of your own wavetables on both oscillators: a WAV, AIFF or FLAC file with a row of 2048-sample frames, or a single cycle of any length. The table is saved inside the project and inside presets you save
 - Ornaments played automatically: grace note, mordent, trill and fall
 - Mono legato or 16 voices, glide, delayed vibrato, pitch bend
@@ -65,6 +71,8 @@ The results are in `build/AMVSynth_artefacts/Release`.
 - `Source/Effects.h`: the effect chain
 - `Source/Wavetables.h`: the wavetables, built from harmonic spectra at startup
 - `Source/WavetableEditor.h`, `.cpp`: the WAVE page
+- `Source/Sampler.h`: the sample, the classic and granular players and the sample tools
+- `Source/SampleDisplay.h`, `.cpp`: the wave display of the SAMPLE page
 - `Source/Modulation.h`: LFOs and the modulation sources and destinations
 - `Source/Presets.h`: the factory presets
 - `Source/SynthEngine.h`: voices, ornaments, MIDI handling and DSP

@@ -57,6 +57,20 @@ public:
     /** The imported wavetable of an oscillator, or null. Message thread only. */
     const amv::UserWavetable* getUserWavetable (int osc) const noexcept { return activeUserWave[(size_t) osc].load(); }
 
+    /** Loads an audio file into the sampler; at most the first 60 seconds are used. Message thread only. */
+    bool loadSample (const juce::File&);
+
+    /** Makes `data` the sample of the sampler, or removes it when null. The sample is saved
+        with the project. Message thread only. */
+    void setSample (std::unique_ptr<amv::SampleData> data);
+
+    /** The loaded sample, or null. Message thread only. */
+    const amv::SampleData* getSample() const noexcept { return activeSample.load(); }
+
+    /** Where the sampler of the newest note is reading, 0..1 through the sample, for the display. */
+    std::array<std::atomic<float>, 16> samplerPositions {};
+    std::atomic<int> samplerPositionCount { 0 };
+
     /** The modulation sources as they are now, indexed by amv::mod::Source, for the display. */
     std::array<std::atomic<float>, amv::mod::numSources> modSourceValues {};
 
@@ -91,6 +105,17 @@ private:
         juce::uint32 retiredAt = 0; // 0 while it is in use
     };
     std::vector<StoredWave> userWaveStore;
+
+    // The sample is handed to the audio thread like the wavetables.
+    void storeSample();
+    void restoreSample();
+    std::atomic<const amv::SampleData*> activeSample { nullptr };
+    struct StoredSample
+    {
+        std::unique_ptr<amv::SampleData> data;
+        juce::uint32 retiredAt = 0;
+    };
+    std::vector<StoredSample> sampleStore;
 
     // The numbered modulation parameters are looked up once, their names are built at run time.
     struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; };
