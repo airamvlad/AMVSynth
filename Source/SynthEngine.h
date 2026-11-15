@@ -143,6 +143,16 @@ struct EngineParams
     // Imported wavetables of oscillator A and B, used when its table is set to "User". Not owned.
     std::array<const UserWavetable*, 2> userWave {};
 
+    // Filter 2 and where each source goes. With filter 2 off everything runs through filter 1.
+    enum FilterSource { routeEngine = 0, routeOscA, routeOscB, routeSub, routeNoise, routeSampler, numFilterSources };
+    bool filter2On = false;
+    bool filtersParallel = false; // off: filter 1 runs into filter 2; on: they sit side by side
+    int filter2Type = filter::highPass12;
+    float cutoff2Hz = 200.0f;
+    float resonance2 = 0.2f;
+    float filter2Env = 0.0f;
+    std::array<int, numFilterSources> filterRoute {}; // 0 = filter 1, 1 = filter 2
+
     int filterType = filter::lowPass12;
     float cutoffHz = 3200.0f;
     float resonance = 0.25f;
@@ -176,6 +186,7 @@ public:
         fltEnv.setSampleRate (newSampleRate);
         env3.setSampleRate (newSampleRate);
         filter.prepare (newSampleRate);
+        filter2.prepare (newSampleRate);
 
         // Plucked strings: long enough for the lowest note at this sample rate.
         size_t length = 1024;
@@ -193,6 +204,7 @@ public:
         fltEnv.reset();
         env3.reset();
         filter.reset();
+            filter2.reset();
         note = -1;
         held = false;
     }
@@ -256,6 +268,7 @@ public:
         if (! wasActive)
         {
             filter.reset();
+            filter2.reset();
             phases = { 0.0f, 0.37f, 0.71f, 0.13f, 0.52f };
             for (auto* osc : { &oscPhasesA, &oscPhasesB })
             {
@@ -350,6 +363,8 @@ public:
             modulated = base;
             modulated.cutoffHz = juce::jlimit (20.0f, 20000.0f, base.cutoffHz * std::exp2 (dest[mod::dstCutoff] * 5.0f));
             modulated.resonance = unit (base.resonance + dest[mod::dstResonance]);
+            modulated.cutoff2Hz = juce::jlimit (20.0f, 20000.0f, base.cutoff2Hz * std::exp2 (dest[mod::dstCutoff2] * 5.0f));
+            modulated.resonance2 = unit (base.resonance2 + dest[mod::dstResonance2]);
             modulated.oscA.position = unit (base.oscA.position + dest[mod::dstOscAPosition]);
             modulated.oscB.position = unit (base.oscB.position + dest[mod::dstOscBPosition]);
             modulated.oscA.level = unit (base.oscA.level + dest[mod::dstOscALevel]);
@@ -442,6 +457,16 @@ public:
                                            p.cutoffHz * std::exp2 (p.filterEnv * 5.0f * envNow + keyTrack));
         filter.set (p.filterType, cutoff, p.resonance);
 
+        const bool twoFilters = p.filter2On;
+        if (twoFilters)
+            filter2.set (p.filter2Type, juce::jlimit (20.0f, 0.45f * sr, p.cutoff2Hz * std::exp2 (p.filter2Env * 5.0f * envNow + keyTrack)), p.resonance2);
+
+        // The bus each source feeds: 0 is filter 1, 1 is filter 2.
+        std::array<size_t, EngineParams::numFilterSources> route {};
+        if (twoFilters)
+            for (size_t r = 0; r < route.size(); ++r)
+                route[r] = p.filterRoute[r] != 0 ? 1u : 0u;
+
         ModelCoeffs mc;
         if (p.engineLevel > 0.0f)
             prepareModel (mc, p, sr);
@@ -489,7 +514,8 @@ public:
                 releaseTime += dt;
             }
 
-            float s = 0.0f, oscLeft = 0.0f, oscRight = 0.0f;
+            float s = 0.0f;
+            float bus[2][2] {}; // [filter][left, right]
             if (p.engineLevel > 0.0f)
             {
                 switch (p.model)
@@ -514,6 +540,8 @@ public:
                 }
 
                 s *= p.engineLevel;
+                bus[route[EngineParams::routeEngine]][0] += s;
+                bus[route[EngineParams::routeEngine]][1] += s;
             }
 
             if (extras)
@@ -521,15 +549,17 @@ public:
                 const float inc = midiToHz (pitch) / sr;
 
                 if (oscA.on)
-                    renderOsc (oscPhasesA, oscA, inc, oscLeft, oscRight);
+                    renderOsc (oscPhasesA, oscA, inc, bus[route[EngineParams::routeOscA]][0], bus[route[EngineParams::routeOscA]][1]);
                 if (oscB.on)
-                    renderOsc (oscPhasesB, oscB, inc, oscLeft, oscRight);
+                    renderOsc (oscPhasesB, oscB, inc, bus[route[EngineParams::routeOscB]][0], bus[route[EngineParams::routeOscB]][1]);
 
                 if (subOn)
                 {
                     const float subInc = inc * subRatio;
                     const float sine = std::sin (subPhase * juce::MathConstants<float>::twoPi);
-                    s += (sine + (pulse (subPhase, subInc, 0.5f) * 0.7f - sine) * p.subShape) * p.subLevel * 0.8f;
+                    const float sub = (sine + (pulse (subPhase, subInc, 0.5f) * 0.7f - sine) * p.subShape) * p.subLevel * 0.8f;
+                    bus[route[EngineParams::routeSub]][0] += sub;
+                    bus[route[EngineParams::routeSub]][1] += sub;
                     advance (subPhase, subInc);
                 }
             }
@@ -538,19 +568,32 @@ public:
             {
                 // Without key tracking only bends, vibrato and modulation move the pitch.
                 const float ratio = p.sampler.keyTrack ? midiToHz (pitch) / samplerRootHz : std::exp2 ((pitch - currentPitch) / 12.0f);
-                samplerVoice.process (p.sampler, ratio * samplerTune, sr, oscLeft, oscRight);
+                samplerVoice.process (p.sampler, ratio * samplerTune, sr, bus[route[EngineParams::routeSampler]][0], bus[route[EngineParams::routeSampler]][1]);
             }
 
             if (noiseOn)
             {
                 noiseLp += (noise() - noiseLp) * noiseCoeff;
-                s += noiseLp * p.noiseLevel * 0.7f;
+                const float hiss = noiseLp * p.noiseLevel * 0.7f;
+                bus[route[EngineParams::routeNoise]][0] += hiss;
+                bus[route[EngineParams::routeNoise]][1] += hiss;
             }
 
             const float gain = ampEnv.getNextSample() * (0.35f + 0.65f * velocity) * modGain;
-            const float left = filter.processSample (0, s + oscLeft);
+            float left = filter.processSample (0, bus[0][0]);
+            float right = wide ? filter.processSample (1, bus[0][1]) : left;
+
+            if (twoFilters)
+            {
+                // In series what leaves filter 1 joins the sources of filter 2; in parallel the two outputs add.
+                const float out2 = filter2.processSample (0, p.filtersParallel ? bus[1][0] : left + bus[1][0]);
+                const float out2Right = wide ? filter2.processSample (1, p.filtersParallel ? bus[1][1] : right + bus[1][1]) : out2;
+                left = p.filtersParallel ? left + out2 : out2;
+                right = p.filtersParallel ? right + out2Right : out2Right;
+            }
+
             out[i] += left * gain;
-            outRight[i] += (wide ? filter.processSample (1, s + oscRight) : left) * gain;
+            outRight[i] += right * gain;
         }
 
         if (! isActive())
@@ -1475,7 +1518,7 @@ private:
 
     double sampleRate = 44100.0;
     juce::ADSR ampEnv, fltEnv, env3;
-    VoiceFilter filter;
+    VoiceFilter filter, filter2;
     SamplerVoice samplerVoice;
     juce::Random random;
 

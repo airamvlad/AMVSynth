@@ -28,7 +28,8 @@ What it does:
 - Import of your own wavetables on both oscillators: a WAV, AIFF or FLAC file with a row of 2048-sample frames, or a single cycle of any length. The table is saved inside the project and inside presets you save
 - Ornaments played automatically: grace note, mordent, trill and fall
 - Mono legato or 16 voices, glide, delayed vibrato, pitch bend
-- Seven filter types (low pass and high pass at 12 and 24 dB, band pass, notch, comb) and two envelopes that are drawn as curves and edited by dragging or with their A, D, S, R knobs
+- Two filters with nine types each (low pass and high pass at 12 and 24 dB, band pass, notch, comb, formant, phaser). Filter 2 runs after filter 1 or beside it, and the Balkan engine, each oscillator, the sub, the noise and the sampler each choose their filter
+- Two envelopes that are drawn as curves and edited by dragging or with their A, D, S, R knobs
 - Reference pitch from 400 to 480 Hz (type 432 for A4 = 432 Hz); it belongs to the project and stays when you change presets
 - MPE: per-note pitch bend, pressure and timbre on channels 2 to 16, so Bitwig's Micro-pitch and MPE controllers work. In Bitwig switch on "Use MPE" for the plugin and leave the bend range at 48
 
