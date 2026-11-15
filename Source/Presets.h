@@ -20,7 +20,7 @@ inline const std::vector<Preset>& getFactoryPresets()
     using namespace id;
 
     // Choice indices used below.
-    enum { juzni = 0, accordion, gusle, frula, kaval, gajde, zurlaModel, tambura, tapan, dvojnice, clarinet, truba, violin };
+    enum { juzni = 0, accordion, gusle, frula, kaval, gajde, zurlaModel, tambura, tapan, dvojnice, clarinet, truba, violin, sargija, kanun, darbuka, voice };
     enum { chromatic = 0, hijaz, hijazkar, nikriz, harmonicMinor, kurdi, rast, ussak, huseyni, saba, naturalMinor, majorScale };
     enum { m44 = 0, m58, m78a, m78b, m98, m118 };
     enum { basic = 0, acid, pwm, vowels, kavalTable, zurla, reeds, bells };
@@ -132,6 +132,32 @@ inline const std::vector<Preset>& getFactoryPresets()
             { scale, harmonicMinor }, { snap, 1 }, { ornGrace, 1 }, { ornChance, 35.0f },
             { glide, 90.0f }, { vibDepth, 30.0f }, { vibRate, 5.6f }, { vibDelay, 260.0f }, { ampA, 70.0f }, { ampR, 240.0f },
             { cutoff, 8000.0f }, { filterEnv, 0.0f }, { level, -11.0f }, { reverbOn, 1 }, { reverbSize, 0.7f }, { reverbMix, 26.0f } } },
+
+        { "Sargija Sevdah", {
+            { model, sargija }, { sarPluck, 0.75f }, { sarDecay, 0.55f }, { sarDrone, 0.5f }, { sarTone, 0.7f },
+            { scale, hijaz }, { snap, 1 }, { ornGrace, 1 }, { ornMordent, 1 }, { ornChance, 45.0f }, { ornSpeed, 50.0f },
+            { vibDepth, 0.0f }, { glide, 30.0f }, { cutoff, 11000.0f }, { filterEnv, 0.0f }, { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 500.0f },
+            { reverbOn, 1 }, { reverbSize, 0.5f }, { reverbMix, 18.0f } } },
+
+        { "Kanun Tremolo", {
+            { model, kanun }, { kanPluck, 0.75f }, { kanDecay, 0.6f }, { kanShimmer, 0.45f }, { kanTremolo, 0.55f },
+            { scale, hijazkar }, { snap, 1 }, { mono, 0 }, { vibDepth, 0.0f }, { glide, 0.0f },
+            { cutoff, 13000.0f }, { filterEnv, 0.0f }, { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 700.0f },
+            { delayOn, 1 }, { delayTime, 2 }, { delayMix, 20.0f }, { reverbOn, 1 }, { reverbSize, 0.7f }, { reverbMix, 24.0f } } },
+
+        { "Darbuka", {
+            { model, darbuka }, { darStrike, 0.2f }, { darSnap, 0.5f }, { darDecay, 0.5f }, { darRing, 0.3f },
+            { vibDepth, 0.0f }, { glide, 0.0f }, { cutoff, 16000.0f }, { filterEnv, 0.0f },
+            { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 250.0f },
+            { reverbOn, 1 }, { reverbSize, 0.25f }, { reverbMix, 10.0f } } },
+
+        { "Glas Sevdah", {
+            { model, voice }, { voxVowel, 0.0f }, { voxBreath, 0.25f }, { voxSize, 0.45f }, { voxTension, 0.5f },
+            { scale, hijaz }, { snap, 1 }, { ornGrace, 1 }, { ornMordent, 1 }, { ornFall, 1 }, { ornChance, 50.0f }, { ornSpeed, 60.0f },
+            { glide, 120.0f }, { vibDepth, 34.0f }, { vibRate, 5.4f }, { vibDelay, 350.0f }, { ampA, 60.0f }, { ampR, 300.0f },
+            { cutoff, 9000.0f }, { filterEnv, 0.0f }, { lfo (1, "Rate"), 0.2f },
+            { slot (0, "Source"), lfo2 }, { slot (0, "Dest"), toCutoff }, { slot (0, "Amount"), 0.05f },
+            { reverbOn, 1 }, { reverbSize, 0.8f }, { reverbMix, 30.0f } } },
 
         { "Psy Bass", {
             { engineLevel, 0.0f }, { oscATable, basic }, { oscAPos, 0.66f }, { oscALevel, 0.9f }, { oscAPitch, -12.0f },

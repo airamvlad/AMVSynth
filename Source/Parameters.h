@@ -63,6 +63,22 @@ inline constexpr auto vioBow = "vioBow";
 inline constexpr auto vioPosition = "vioPosition";
 inline constexpr auto vioScratch = "vioScratch";
 inline constexpr auto vioBody = "vioBody";
+inline constexpr auto sarPluck = "sarPluck";
+inline constexpr auto sarDecay = "sarDecay";
+inline constexpr auto sarDrone = "sarDrone";
+inline constexpr auto sarTone = "sarTone";
+inline constexpr auto kanPluck = "kanPluck";
+inline constexpr auto kanDecay = "kanDecay";
+inline constexpr auto kanShimmer = "kanShimmer";
+inline constexpr auto kanTremolo = "kanTremolo";
+inline constexpr auto darStrike = "darStrike";
+inline constexpr auto darSnap = "darSnap";
+inline constexpr auto darDecay = "darDecay";
+inline constexpr auto darRing = "darRing";
+inline constexpr auto voxVowel = "voxVowel";
+inline constexpr auto voxBreath = "voxBreath";
+inline constexpr auto voxSize = "voxSize";
+inline constexpr auto voxTension = "voxTension";
 inline constexpr auto arpOn = "arpOn";
 inline constexpr auto arpMeter = "arpMeter";
 inline constexpr auto arpRate = "arpRate";
@@ -182,7 +198,8 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { paramId, 1 }, name, choices, def));
     };
 
-    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde", "Zurla", "Tambura", "Tapan", "Dvojnice", "Clarinet", "Truba", "Violin" }, 0);
+    addChoice (id::model, "Model", { juce::String (juce::CharPointer_UTF8 ("Ju\xc5\xbeni Vetar")), "Accordion", "Gusle", "Frula", "Kaval", "Gajde", "Zurla", "Tambura", "Tapan", "Dvojnice", "Clarinet", "Truba", "Violin",
+                                   juce::String (juce::CharPointer_UTF8 ("\xc5\xa0""argija")), "Kanun", "Darbuka", "Voice" }, 0);
 
     // Juzni Vetar lead
     add (id::tone, "Lead Tone", Range (0.0f, 1.0f), 0.55f);
@@ -261,6 +278,30 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::vioPosition, "Violin Position", Range (0.0f, 1.0f), 0.3f);
     add (id::vioScratch, "Violin Scratch", Range (0.0f, 1.0f), 0.2f);
     add (id::vioBody, "Violin Body", Range (0.0f, 1.0f), 0.6f);
+
+    // Sargija
+    add (id::sarPluck, "Sargija Pluck", Range (0.0f, 1.0f), 0.75f);
+    add (id::sarDecay, "Sargija Decay", Range (0.0f, 1.0f), 0.5f);
+    add (id::sarDrone, "Sargija Drone", Range (0.0f, 1.0f), 0.5f);
+    add (id::sarTone, "Sargija Tone", Range (0.0f, 1.0f), 0.7f);
+
+    // Kanun
+    add (id::kanPluck, "Kanun Pluck", Range (0.0f, 1.0f), 0.7f);
+    add (id::kanDecay, "Kanun Decay", Range (0.0f, 1.0f), 0.6f);
+    add (id::kanShimmer, "Kanun Shimmer", Range (0.0f, 1.0f), 0.4f);
+    add (id::kanTremolo, "Kanun Tremolo", Range (0.0f, 1.0f), 0.0f);
+
+    // Darbuka
+    add (id::darStrike, "Darbuka Strike", Range (0.0f, 1.0f), 0.2f);
+    add (id::darSnap, "Darbuka Snap", Range (0.0f, 1.0f), 0.5f);
+    add (id::darDecay, "Darbuka Decay", Range (0.0f, 1.0f), 0.5f);
+    add (id::darRing, "Darbuka Ring", Range (0.0f, 1.0f), 0.3f);
+
+    // Voice
+    add (id::voxVowel, "Voice Vowel", Range (0.0f, 1.0f), 0.0f);
+    add (id::voxBreath, "Voice Breath", Range (0.0f, 1.0f), 0.2f);
+    add (id::voxSize, "Voice Size", Range (0.0f, 1.0f), 0.5f);
+    add (id::voxTension, "Voice Tension", Range (0.0f, 1.0f), 0.5f);
 
     // Wavetable oscillators, sub, noise and the mixer
     juce::StringArray tableNames;
