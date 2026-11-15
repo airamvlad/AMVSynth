@@ -6,6 +6,7 @@
 #include "Arpeggiator.h"
 
 #include <array>
+#include <memory>
 #include <cmath>
 #include <vector>
 
@@ -86,6 +87,12 @@ public:
         for (auto& line : delayLines)
             line.assign (delaySize, 0.0f);
 
+        // The tube and fold curves add harmonics far above the input; running them at four times
+        // the sample rate keeps those from folding back as aliasing.
+        oversampleBlock = juce::jmax (16, maxBlockSize);
+        oversampling = std::make_unique<juce::dsp::Oversampling<float>> (2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+        oversampling->initProcessing ((size_t) oversampleBlock);
+
         reverb.setSampleRate (sampleRate);
         limiter.prepare ({ sampleRate, (juce::uint32) juce::jmax (1, maxBlockSize), 2 });
         limiter.setThreshold (-0.3f);
@@ -106,6 +113,8 @@ public:
         crushHold = { 0.0f, 0.0f };
         crushCounter = 0.0f;
         freeBeat = 0.0;
+        if (oversampling != nullptr)
+            oversampling->reset();
         reverb.reset();
         limiter.reset();
     }
@@ -164,7 +173,6 @@ private:
         const float drive = juce::Decibels::decibelsToGain (p.distDriveDb);
         const float makeup = 1.0f / std::sqrt (drive);
         const float mix = p.distMix;
-        float* channels[2] { left, right };
 
         if (p.distType == 2)
         {
@@ -190,19 +198,34 @@ private:
             return;
         }
 
-        for (auto* data : channels)
-            for (int i = 0; i < numSamples; ++i)
+        // Work through the buffer in pieces the oversampler was prepared for.
+        for (int start = 0; start < numSamples; start += oversampleBlock)
+        {
+            const int n = juce::jmin (oversampleBlock, numSamples - start);
+            float* piece[2] { left + start, right + start };
+            juce::dsp::AudioBlock<float> block (piece, 2, (size_t) n);
+            auto up = oversampling->processSamplesUp (block);
+
+            for (size_t ch = 0; ch < 2; ++ch)
             {
-                const float x = data[i] * drive;
-                float y;
+                float* data = up.getChannelPointer (ch);
+                for (size_t i = 0; i < up.getNumSamples(); ++i)
+                {
+                    const float x = data[i] * drive;
+                    float y;
 
-                if (p.distType == 1)
-                    y = std::sin (juce::MathConstants<float>::halfPi * juce::jlimit (-8.0f, 8.0f, x)); // wavefolder
-                else
-                    y = (std::tanh (x + 0.2f) - 0.19738f) * 1.04f;                                    // slightly asymmetric tube
+                    if (p.distType == 1)
+                        y = std::sin (juce::MathConstants<float>::halfPi * juce::jlimit (-8.0f, 8.0f, x)); // wavefolder
+                    else
+                        y = (std::tanh (x + 0.2f) - 0.19738f) * 1.04f;                                    // slightly asymmetric tube
 
-                data[i] += (y * (p.distType == 1 ? 0.8f : juce::jmax (makeup, 0.5f)) - data[i]) * mix;
+                    // The dry part goes through the same filters, so the mix stays in phase.
+                    data[i] += (y * (p.distType == 1 ? 0.8f : juce::jmax (makeup, 0.5f)) - data[i]) * mix;
+                }
             }
+
+            oversampling->processSamplesDown (block);
+        }
     }
 
     void gate (float* left, float* right, int numSamples, const FxParams& p, double startBeat, double beatsPerSample)
@@ -301,6 +324,8 @@ private:
     std::array<float, 2> crushHold { 0.0f, 0.0f };
     float crushCounter = 0.0f;
     double freeBeat = 0.0;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
+    int oversampleBlock = 512;
     juce::Reverb reverb;
     juce::dsp::Limiter<float> limiter;
 };
