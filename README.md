@@ -15,7 +15,7 @@ What it does:
 - Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Pythagorean tuning (all twelve keys from pure fifths on the chosen root) in the same scale list
-- Wavetable editor on the WAVE page: draw each of the 16 frames by hand (free or on a step grid), build it from 48 harmonic bars, start from basic shapes or a copy of a built-in table, smooth, normalize, invert, reverse, copy and paste frames, fill the table, morph between the first and last frame, undo, and export the result as a WAV
+- Wavetable editor on the WAVE page: draw each of the 16 frames by hand (free or on a step grid), build it from 48 harmonic bars, start from basic shapes or a copy of a built-in table, smooth, normalize, invert, reverse, copy and paste frames, fill the table, morph from the first frame to the selected one, undo, and export the result as a WAV
 - Import of your own wavetables on both oscillators: a WAV, AIFF or FLAC file with a row of 2048-sample frames, or a single cycle of any length. The table is saved inside the project and inside presets you save
 - Ornaments played automatically: grace note, mordent, trill and fall
 - Mono legato or 16 voices, glide, delayed vibrato, pitch bend
