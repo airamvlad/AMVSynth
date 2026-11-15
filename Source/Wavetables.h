@@ -235,4 +235,118 @@ private:
 
     std::vector<float> data;
 };
+
+/** A wavetable made from the user's own audio, in the same form as the tables of the bank:
+    16 frames, each at 10 band-limited levels.
+
+    The audio is read the way wavetable files are usually laid out: a file whose length is a
+    multiple of 2048 samples is a row of 2048-sample frames, anything else is one single cycle.
+    More or fewer than 16 frames are spread over the 16 positions by crossfading neighbours. */
+class UserWavetable
+{
+public:
+    static constexpr int numFrames = WavetableBank::numFrames;
+    static constexpr int numLevels = WavetableBank::numLevels;
+    static constexpr int tableSize = WavetableBank::tableSize;
+    static constexpr int sourceSize = numFrames * tableSize;
+    static constexpr int maxSourceFrames = 256;
+
+    /** `frames` holds numFrames cycles of tableSize samples, one after another. */
+    UserWavetable (std::vector<float> frames, juce::String tableName)
+        : source (std::move (frames)), name (std::move (tableName))
+    {
+        source.resize ((size_t) sourceSize, 0.0f);
+        data.assign ((size_t) (numFrames * numLevels) * (size_t) (tableSize + 1), 0.0f);
+
+        juce::dsp::FFT fft (11);
+        std::vector<float> spectrum ((size_t) tableSize * 2), buffer ((size_t) tableSize * 2);
+        float peak = 0.0f;
+
+        for (int frame = 0; frame < numFrames; ++frame)
+        {
+            std::fill (spectrum.begin(), spectrum.end(), 0.0f);
+            std::copy (source.begin() + frame * tableSize, source.begin() + (frame + 1) * tableSize, spectrum.begin());
+            fft.performRealOnlyForwardTransform (spectrum.data());
+
+            for (int level = 0; level < numLevels; ++level)
+            {
+                // Keep harmonics 1 to `harmonics` and their mirror images; the constant part goes.
+                const int harmonics = juce::jmin (WavetableBank::maxHarmonics >> level, WavetableBank::maxHarmonics - 1);
+                std::fill (buffer.begin(), buffer.end(), 0.0f);
+                for (int h = 1; h <= harmonics; ++h)
+                    for (int bin : { h, tableSize - h })
+                    {
+                        buffer[(size_t) bin * 2] = spectrum[(size_t) bin * 2];
+                        buffer[(size_t) bin * 2 + 1] = spectrum[(size_t) bin * 2 + 1];
+                    }
+
+                fft.performRealOnlyInverseTransform (buffer.data());
+
+                auto* dest = data.data() + (size_t) (frame * numLevels + level) * (size_t) (tableSize + 1);
+                std::copy (buffer.begin(), buffer.begin() + tableSize, dest);
+                dest[tableSize] = dest[0];
+
+                if (level == 0)
+                    for (int i = 0; i < tableSize; ++i)
+                        peak = juce::jmax (peak, std::abs (dest[i]));
+            }
+        }
+
+        // One gain for the whole table, so quiet frames stay quiet next to loud ones.
+        const float scale = peak > 1.0e-9f ? 1.0f / peak : 0.0f;
+        for (auto& v : data)
+            v *= scale;
+    }
+
+    /** Cuts audio into frames as described above. Returns null when there is nothing usable. */
+    static std::unique_ptr<UserWavetable> fromAudio (const float* samples, int numSamples, const juce::String& tableName)
+    {
+        if (samples == nullptr || numSamples < 8)
+            return {};
+
+        for (int i = 0; i < numSamples; ++i)
+            if (! std::isfinite (samples[i]))
+                return {};
+
+        const bool isRow = numSamples >= 2 * tableSize && numSamples % tableSize == 0;
+        const int sourceFrames = isRow ? juce::jmin (maxSourceFrames, numSamples / tableSize) : 1;
+        const int cycleLength = isRow ? tableSize : numSamples;
+
+        // Reads one cycle of the source, stretched to tableSize samples.
+        const auto read = [&] (int frame, int i)
+        {
+            const float* cycle = samples + (size_t) frame * (size_t) cycleLength;
+            const double pos = (double) i * (double) cycleLength / (double) tableSize;
+            const int i0 = (int) pos, i1 = (i0 + 1) % cycleLength;
+            return cycle[i0] + (cycle[i1] - cycle[i0]) * (float) (pos - (double) i0);
+        };
+
+        std::vector<float> frames ((size_t) sourceSize);
+        for (int frame = 0; frame < numFrames; ++frame)
+        {
+            const float framePos = (float) frame / (float) (numFrames - 1) * (float) (sourceFrames - 1);
+            const int f0 = juce::jmin ((int) framePos, sourceFrames - 1), f1 = juce::jmin (f0 + 1, sourceFrames - 1);
+            const float mix = framePos - (float) f0;
+
+            for (int i = 0; i < tableSize; ++i)
+                frames[(size_t) (frame * tableSize + i)] = read (f0, i) + (read (f1, i) - read (f0, i)) * mix;
+        }
+
+        return std::make_unique<UserWavetable> (std::move (frames), tableName);
+    }
+
+    /** One cycle of tableSize + 1 samples; the last sample repeats the first. */
+    const float* wave (int frame, int level) const noexcept
+    {
+        return data.data() + (size_t) (frame * numLevels + level) * (size_t) (tableSize + 1);
+    }
+
+    /** The 16 cycles the table was built from, for saving with the project. */
+    const std::vector<float>& getSource() const noexcept { return source; }
+    const juce::String& getName() const noexcept { return name; }
+
+private:
+    std::vector<float> source, data;
+    juce::String name;
+};
 } // namespace amv

@@ -11,9 +11,11 @@ What it does:
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
 - Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
+- Pythagorean tuning (all twelve keys from pure fifths on the chosen root) in the same scale list
+- Import of your own wavetables on both oscillators: a WAV, AIFF or FLAC file with a row of 2048-sample frames, or a single cycle of any length. The table is saved inside the project and inside presets you save
 - Ornaments played automatically: grace note, mordent, trill and fall
 - Mono legato or 16 voices, glide, delayed vibrato, pitch bend
-- Seven filter types (low pass and high pass at 12 and 24 dB, band pass, notch, comb) and two envelopes that are drawn as curves and edited by dragging
+- Seven filter types (low pass and high pass at 12 and 24 dB, band pass, notch, comb) and two envelopes that are drawn as curves and edited by dragging or with their A, D, S, R knobs
 - Reference pitch from 400 to 480 Hz (type 432 for A4 = 432 Hz); it belongs to the project and stays when you change presets
 - MPE: per-note pitch bend, pressure and timbre on channels 2 to 16, so Bitwig's Micro-pitch and MPE controllers work. In Bitwig switch on "Use MPE" for the plugin and leave the bend range at 48
 

@@ -57,6 +57,48 @@ int main()
         failures += ok ? 0 : 1;
     }
 
+    // An imported wavetable is saved with the project and comes back in a new instance.
+    {
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("amvsynth-test-table.wav");
+        file.deleteFile();
+
+        juce::AudioBuffer<float> audio (1, 2048 * 4);
+        for (int i = 0; i < audio.getNumSamples(); ++i)
+            audio.setSample (0, i, (float) std::sin (juce::MathConstants<double>::twoPi * (double) ((i / 2048) + 1) * (double) i / 2048.0));
+
+        bool written = false;
+        {
+            juce::WavAudioFormat wav;
+            if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+                if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (48000.0).withNumChannels (1).withBitsPerSample (24)))
+                    written = writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+        }
+
+        auto* first = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        const bool imported = written && first != nullptr && first->importWavetable (1, file) && first->getUserWavetable (1) != nullptr
+                                  && first->getUserWavetable (0) == nullptr && ! first->importWavetable (0, file.getSiblingFile ("amvsynth-no-such-file.wav"));
+
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
+        other->setStateInformation (state.getData(), (int) state.getSize());
+        auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
+
+        bool restored = imported && second != nullptr && second->getUserWavetable (1) != nullptr
+                            && second->getUserWavetable (1)->getName() == "amvsynth-test-table";
+        for (int i = 0; restored && i < 2048; ++i)
+            restored = std::abs (second->getUserWavetable (1)->wave (15, 0)[i] - first->getUserWavetable (1)->wave (15, 0)[i]) < 1.0e-6f;
+
+        // A factory preset leaves the imported table in place.
+        other->setCurrentProgram (3);
+        restored = restored && second->getUserWavetable (1) != nullptr;
+
+        std::printf ("%s  imported wavetable is read from a WAV file and saved with the project (state is %d KB)\n",
+                     imported && restored ? "ok  " : "FAIL", (int) (state.getSize() / 1024));
+        failures += imported && restored ? 0 : 1;
+        file.deleteFile();
+    }
+
     std::printf ("%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

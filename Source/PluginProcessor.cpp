@@ -110,6 +110,7 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.bendRange = value (id::bendRange);
     p.glideSec = value (id::glide) * 0.001f;
     p.mono = value (id::mono) > 0.5f;
+    p.userWave = { activeUserWave[0].load (std::memory_order_acquire), activeUserWave[1].load (std::memory_order_acquire) };
     p.tuneHz = value (id::tuneA4);
     p.mpe = value (id::mpe) > 0.5f;
     p.mpeBendRange = value (id::mpeBend);
@@ -266,7 +267,90 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
             const auto state = juce::ValueTree::fromXml (*xml);
             currentPreset = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("preset", 0));
             apvts.replaceState (state);
+            restoreUserWavetables();
         }
+}
+
+namespace
+{
+const char* const userWaveData[2] { "userWaveA", "userWaveB" };
+const char* const userWaveName[2] { "userWaveAName", "userWaveBName" };
+} // namespace
+
+void AMVSynthAudioProcessor::setUserWavetable (int osc, std::unique_ptr<amv::UserWavetable> table)
+{
+    activeUserWave[(size_t) osc].store (table.get(), std::memory_order_release);
+    if (table != nullptr)
+        userWaveStore.push_back (std::move (table));
+
+    // Old tables go once they are several imports behind; the audio thread has long let go of them.
+    while (userWaveStore.size() > 8)
+        userWaveStore.erase (userWaveStore.begin());
+}
+
+bool AMVSynthAudioProcessor::importWavetable (int osc, const juce::File& file)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr || reader->lengthInSamples < 8)
+        return false;
+
+    // Wavetable files are short; anything longer than the largest table is cut off.
+    const juce::int64 longest = (juce::int64) amv::UserWavetable::maxSourceFrames * amv::UserWavetable::tableSize;
+    const int length = (int) (reader->lengthInSamples < longest ? reader->lengthInSamples : longest);
+    juce::AudioBuffer<float> audio (1, length);
+    if (! reader->read (&audio, 0, length, 0, true, false))
+        return false;
+
+    auto table = amv::UserWavetable::fromAudio (audio.getReadPointer (0), length, file.getFileNameWithoutExtension());
+    if (table == nullptr)
+        return false;
+
+    setUserWavetable (osc, std::move (table));
+    storeUserWavetables();
+    return true;
+}
+
+void AMVSynthAudioProcessor::storeUserWavetables()
+{
+    // The table travels with the project and with saved presets, so the file is not needed again.
+    for (int osc = 0; osc < 2; ++osc)
+        if (const auto* table = activeUserWave[(size_t) osc].load())
+        {
+            const auto& source = table->getSource();
+            apvts.state.setProperty (userWaveData[osc], juce::MemoryBlock (source.data(), source.size() * sizeof (float)).toBase64Encoding(), nullptr);
+            apvts.state.setProperty (userWaveName[osc], table->getName(), nullptr);
+        }
+}
+
+void AMVSynthAudioProcessor::restoreUserWavetables()
+{
+    for (int osc = 0; osc < 2; ++osc)
+    {
+        juce::MemoryBlock block;
+        const auto text = apvts.state.getProperty (userWaveData[osc]).toString();
+        const size_t expected = (size_t) amv::UserWavetable::sourceSize * sizeof (float);
+
+        if (text.isNotEmpty() && block.fromBase64Encoding (text) && block.getSize() == expected)
+        {
+            std::vector<float> frames ((size_t) amv::UserWavetable::sourceSize);
+            std::memcpy (frames.data(), block.getData(), expected);
+            bool finite = true;
+            for (float v : frames)
+                finite = finite && std::isfinite (v);
+
+            if (finite)
+            {
+                setUserWavetable (osc, std::make_unique<amv::UserWavetable> (std::move (frames), apvts.state.getProperty (userWaveName[osc]).toString()));
+                continue;
+            }
+        }
+
+        // A state without a table keeps the one that is loaded now.
+        if (activeUserWave[(size_t) osc].load() != nullptr)
+            storeUserWavetables();
+    }
 }
 
 bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)
@@ -292,6 +376,7 @@ bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
                 kept.emplace_back (ranged, ranged->getValue());
 
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    restoreUserWavetables();
 
     for (const auto& [param, normalised] : kept)
         param->setValueNotifyingHost (normalised);

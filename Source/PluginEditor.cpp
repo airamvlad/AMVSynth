@@ -201,7 +201,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
     // Row 3: filter, envelopes, output.
     {
-        auto& s = addSection ("FILTER", false, 3, 4.6f);
+        auto& s = addSection ("FILTER", false, 3, 4.0f);
         s.columnWidth = 118;
         s.column.push_back (&makeChoice (id::filterType, false)->box);
         s.knobs = makeKnobs (false, { { id::cutoff, "CUTOFF" }, { id::resonance, "RES" }, { id::filterEnv, "ENV" } });
@@ -210,17 +210,38 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     // The envelopes are drawn as curves with handles to drag.
     ampEnvDisplay.setParameters (processor.apvts, id::ampA, id::ampD, id::ampS, id::ampR);
     filterEnvDisplay.setParameters (processor.apvts, id::fltA, id::fltD, id::fltS, id::fltR);
-    addSection ("AMP ENV", false, 3, 4.0f).display = &ampEnvDisplay;
-    addSection ("FILTER ENV", false, 3, 4.0f).display = &filterEnvDisplay;
+    // The graph and the knobs show the same four values; either one can be used.
+    {
+        auto& s = addSection ("AMP ENV", false, 3, 5.0f);
+        s.display = &ampEnvDisplay;
+        s.displayShare = 0.46f;
+        s.knobs = makeKnobs (false, { { id::ampA, "A" }, { id::ampD, "D" }, { id::ampS, "S" }, { id::ampR, "R" } });
+    }
+    {
+        auto& s = addSection ("FILTER ENV", false, 3, 5.0f);
+        s.display = &filterEnvDisplay;
+        s.displayShare = 0.46f;
+        s.knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
+    }
     addChildComponent (ampEnvDisplay);
     addChildComponent (filterEnvDisplay);
-    addSection ("OUT", false, 3, 1.3f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
 
     // OSC page: two wavetable oscillators, sub, noise and the level of the Balkan engine.
     buildingPage = 1;
+    for (size_t i = 0; i < importButtons.size(); ++i)
+    {
+        auto& button = importButtons[i];
+        button.setButtonText ("IMPORT WAV");
+        button.setTooltip ("Load your own wavetable: a row of 2048-sample frames, or a single cycle of any length. It becomes the User table of this oscillator.");
+        button.setColour (juce::TextButton::buttonColourId, colour::knob);
+        button.setColour (juce::TextButton::textColourOffId, colour::text);
+        button.onClick = [this, i] { importWavetable ((int) i); };
+        addChildComponent (button);
+    }
     {
         auto& s = addSection ("OSC A", false, 0, 1.0f);
         s.column.push_back (&makeChoice (id::oscATable, false)->box);
+        s.column.push_back (&importButtons[0]);
         s.display = &waveA;
         s.knobs = makeKnobs (false, { { id::oscAPos, "POSITION" }, { id::oscAUnison, "UNISON" }, { id::oscADetune, "DETUNE" }, { id::oscAWidth, "WIDTH" },
                                       { id::oscAPitch, "PITCH" }, { id::oscAFine, "FINE" }, { id::oscALevel, "LEVEL" } });
@@ -229,6 +250,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     {
         auto& s = addSection ("OSC B", false, 1, 1.0f);
         s.column.push_back (&makeChoice (id::oscBTable, false)->box);
+        s.column.push_back (&importButtons[1]);
         s.display = &waveB;
         s.knobs = makeKnobs (false, { { id::oscBPos, "POSITION" }, { id::oscBUnison, "UNISON" }, { id::oscBDetune, "DETUNE" }, { id::oscBWidth, "WIDTH" },
                                       { id::oscBPitch, "PITCH" }, { id::oscBFine, "FINE" }, { id::oscBLevel, "LEVEL" } });
@@ -488,6 +510,34 @@ void AMVSynthAudioProcessorEditor::setPage (int page)
     repaint();
 }
 
+void AMVSynthAudioProcessorEditor::importWavetable (int osc)
+{
+    const auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+    fileChooser = std::make_unique<juce::FileChooser> ("Import wavetable", folder, "*.wav;*.aif;*.aiff;*.flac");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this, osc] (const juce::FileChooser& chooser)
+                              {
+                                  const auto file = chooser.getResult();
+                                  if (file == juce::File())
+                                      return;
+
+                                  if (! processor.importWavetable (osc, file))
+                                  {
+                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Import wavetable",
+                                                                              "This file could not be read as audio.");
+                                      return;
+                                  }
+
+                                  // Switch the oscillator to the table that was just loaded.
+                                  if (auto* param = processor.apvts.getParameter (osc == 0 ? amv::id::oscATable : amv::id::oscBTable))
+                                  {
+                                      param->beginChangeGesture();
+                                      param->setValueNotifyingHost (1.0f);
+                                      param->endChangeGesture();
+                                  }
+                              });
+}
+
 void AMVSynthAudioProcessorEditor::updateVisibility()
 {
     for (auto& k : knobs)
@@ -500,6 +550,8 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
     for (auto& c : choices)
         c->box.setVisible (false);
     tuneBox.setVisible (false);
+    for (auto& button : importButtons)
+        button.setVisible (false);
     for (auto& s : sections)
         if (s.display != nullptr)
             s.display->setVisible (false);
@@ -564,18 +616,19 @@ void AMVSynthAudioProcessorEditor::timerCallback()
         levelMeter.repaint();
 
     const auto param = [this] (const char* paramId) { return processor.apvts.getRawParameterValue (paramId)->load(); };
-    const auto sync = [] (WaveDisplay& d, int table, float position, float level)
+    const auto sync = [] (WaveDisplay& d, int table, float position, float level, const amv::UserWavetable* user)
     {
-        if (table != d.table || std::abs (position - d.position) > 1.0e-4f || (level > 0.0f) != d.active)
+        if (table != d.table || std::abs (position - d.position) > 1.0e-4f || (level > 0.0f) != d.active || user != d.user)
         {
+            d.user = user;
             d.table = table;
             d.position = position;
             d.active = level > 0.0f;
             d.repaint();
         }
     };
-    sync (waveA, juce::roundToInt (param (amv::id::oscATable)), param (amv::id::oscAPos), param (amv::id::oscALevel));
-    sync (waveB, juce::roundToInt (param (amv::id::oscBTable)), param (amv::id::oscBPos), param (amv::id::oscBLevel));
+    sync (waveA, juce::roundToInt (param (amv::id::oscATable)), param (amv::id::oscAPos), param (amv::id::oscALevel), processor.getUserWavetable (0));
+    sync (waveB, juce::roundToInt (param (amv::id::oscBTable)), param (amv::id::oscBPos), param (amv::id::oscBLevel), processor.getUserWavetable (1));
 }
 
 void AMVSynthAudioProcessorEditor::LevelMeter::paint (juce::Graphics& g)
@@ -624,12 +677,31 @@ void AMVSynthAudioProcessorEditor::WaveDisplay::paint (juce::Graphics& g)
     g.fillRect (area.getX(), area.getCentreY() - 0.5f, area.getWidth(), 1.0f);
 
     const auto& bank = WavetableBank::get();
-    const int t = juce::jlimit (0, WavetableBank::numTables - 1, table);
+    const bool isUser = table >= WavetableBank::numTables;
     const float framePos = juce::jlimit (0.0f, 1.0f, position) * (float) (WavetableBank::numFrames - 1);
     const int frame = juce::jmin ((int) framePos, WavetableBank::numFrames - 2);
     const float mix = framePos - (float) frame;
-    const float* a = bank.wave (t, frame, 2);
-    const float* b = bank.wave (t, frame + 1, 2);
+    const float* a = bank.wave (0, 0, 2); // the sine that sounds when nothing was imported yet
+    const float* b = a;
+
+    if (isUser && user != nullptr)
+    {
+        a = user->wave (frame, 2);
+        b = user->wave (frame + 1, 2);
+    }
+    else if (! isUser)
+    {
+        a = bank.wave (juce::jmax (0, table), frame, 2);
+        b = bank.wave (juce::jmax (0, table), frame + 1, 2);
+    }
+
+    if (isUser)
+    {
+        g.setColour (colour::dimText);
+        g.setFont (juce::FontOptions (10.5f));
+        g.drawText (user != nullptr ? user->getName() : juce::String ("No wavetable imported"), area.withHeight (12.0f),
+                    juce::Justification::topRight);
+    }
 
     juce::Path path;
     const int points = juce::jmax (2, (int) area.getWidth());
@@ -657,8 +729,8 @@ void AMVSynthAudioProcessorEditor::EnvelopeDisplay::setParameters (APVTS& apvts,
 
 juce::Rectangle<float> AMVSynthAudioProcessorEditor::EnvelopeDisplay::graphArea() const
 {
-    // The bottom strip holds the values as text.
-    return getLocalBounds().toFloat().withTrimmedBottom (18.0f).reduced (9.0f, 8.0f);
+    // The bottom strip holds the values as text, when there is room for them.
+    return getLocalBounds().toFloat().withTrimmedBottom (showsValues() ? 18.0f : 0.0f).reduced (9.0f, 8.0f);
 }
 
 float AMVSynthAudioProcessorEditor::EnvelopeDisplay::segmentWidth() const
@@ -762,6 +834,9 @@ void AMVSynthAudioProcessorEditor::EnvelopeDisplay::paint (juce::Graphics& g)
         g.setColour (active ? colour::text : colour::teal);
         g.drawEllipse (handles[i].x - radius, handles[i].y - radius, radius * 2.0f, radius * 2.0f, 1.8f);
     }
+
+    if (! showsValues())
+        return;
 
     // Values along the bottom; the one being changed is highlighted.
     static const char* names[4] { "A", "D", "S", "R" };
@@ -998,7 +1073,7 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
         if (s.knobs.empty())
             s.display->setBounds (inner.withTrimmedBottom (2));
         else
-            s.display->setBounds (inner.removeFromLeft (inner.getWidth() * 2 / 5).reduced (0, 6));
+            s.display->setBounds (inner.removeFromLeft (juce::roundToInt ((float) inner.getWidth() * s.displayShare)).reduced (0, 6));
         inner.removeFromLeft (10);
     }
 

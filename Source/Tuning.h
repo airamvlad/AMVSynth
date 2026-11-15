@@ -28,6 +28,9 @@ inline const std::vector<ScaleDef>& getScales()
         { "Saba", { 0, 150, 300, 400, 700, 800, 1000 } },
         { "Minor", { 0, 200, 300, 500, 700, 800, 1000 } },
         { "Major", { 0, 200, 400, 500, 700, 900, 1100 } },
+        // All twelve keys, built from pure fifths (3:2): three fifths down and eight up from the root.
+        { "Pythagorean", { 0.0f, 113.685f, 203.910f, 294.135f, 407.820f, 498.045f, 611.730f, 701.955f, 815.640f, 905.865f, 996.090f,
+                           1109.775f } },
     };
     return scales;
 }

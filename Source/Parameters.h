@@ -319,6 +319,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     juce::StringArray tableNames;
     for (const auto* n : getWavetableNames())
         tableNames.add (n);
+    tableNames.add ("User"); // the wavetable imported for that oscillator
 
     add (id::engineLevel, "Engine Level", Range (0.0f, 1.0f), 1.0f);
 
