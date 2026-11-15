@@ -80,6 +80,8 @@ enum Dest
     dstReverbMix,
     dstCutoff2,
     dstResonance2,
+    dstOscAFm,
+    dstOscBFm,
     numDests
 };
 
@@ -154,6 +156,41 @@ enum Mode
 };
 } // namespace warp
 
+/** How another source acts on a wavetable oscillator. */
+namespace xmod
+{
+enum Type
+{
+    off = 0,
+    fm,   // the modulator moves the phase, as in FM synths
+    ring, // the oscillator is multiplied by the modulator
+    am,   // the modulator turns the level down and up
+    numTypes
+};
+
+enum Source
+{
+    otherOsc = 0,
+    sub,
+    noise,
+    engine,
+    sampler,
+    numSources
+};
+} // namespace xmod
+
+inline const std::array<const char*, xmod::numTypes>& getXmodTypes()
+{
+    static const std::array<const char*, xmod::numTypes> names { "Mod Off", "FM", "Ring", "AM" };
+    return names;
+}
+
+/** `osc` is 0 for oscillator A, whose other oscillator is B. */
+inline juce::StringArray getXmodSources (int osc)
+{
+    return { osc == 0 ? "from Osc B" : "from Osc A", "from Sub", "from Noise", "from Engine", "from Sampler" };
+}
+
 inline const std::array<const char*, warp::numModes>& getWarpModes()
 {
     static const std::array<const char*, warp::numModes> names { "Warp Off", "Bend +", "Bend -", "PWM", "Sync", "Mirror" };
@@ -179,7 +216,8 @@ inline const std::array<const char*, mod::numDests>& getModDests()
                                                                 "Grain Density", "Grain Spray", "Grain Scan",
                                                                 "Amp Attack", "Amp Decay", "Amp Release", "Filter Attack", "Filter Decay", "Filter Release",
                                                                 "Distortion Drive", "Distortion Mix", "Gate Depth", "Delay Feedback", "Delay Tone",
-                                                                "Delay Mix", "Reverb Size", "Reverb Mix", "Filter 2 Cutoff", "Filter 2 Resonance" };
+                                                                "Delay Mix", "Reverb Size", "Reverb Mix", "Filter 2 Cutoff", "Filter 2 Resonance",
+                                                                "Osc A FM/Ring", "Osc B FM/Ring" };
     return names;
 }
 

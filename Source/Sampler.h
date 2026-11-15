@@ -276,8 +276,8 @@ public:
     }
 
     /** Adds one sample of output. `ratio` is the playback speed for the played key and
-        `sampleRate` the rate of the output. */
-    void process (const SamplerParams& p, float ratio, float sampleRate, float& left, float& right) noexcept
+        `sampleRate` the rate of the output. `raw` receives the sample before level and pan. */
+    void process (const SamplerParams& p, float ratio, float sampleRate, float& left, float& right, float* raw = nullptr) noexcept
     {
         const SampleData* data = p.data;
         if (data == nullptr)
@@ -295,6 +295,8 @@ public:
 
         left += l * panL * p.level;
         right += r * panR * p.level;
+        if (raw != nullptr)
+            *raw = 0.5f * (l + r); // before level and pan, for use as a modulator
     }
 
 private:

@@ -103,6 +103,12 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.oscA.warpAmount = value (id::oscAWarpAmount);
     p.oscB.warp = juce::roundToInt (value (id::oscBWarp));
     p.oscB.warpAmount = value (id::oscBWarpAmount);
+    p.oscA.xmodType = juce::roundToInt (value (id::oscAXmodType));
+    p.oscA.xmodSource = juce::roundToInt (value (id::oscAXmodSource));
+    p.oscA.xmodAmount = value (id::oscAXmodAmount);
+    p.oscB.xmodType = juce::roundToInt (value (id::oscBXmodType));
+    p.oscB.xmodSource = juce::roundToInt (value (id::oscBXmodSource));
+    p.oscB.xmodAmount = value (id::oscBXmodAmount);
     p.subLevel = value (id::subLevel);
     p.subOctave = juce::roundToInt (value (id::subOctave)) + 1;
     p.subShape = value (id::subShape);

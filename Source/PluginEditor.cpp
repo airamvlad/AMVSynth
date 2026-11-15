@@ -262,20 +262,30 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     {
         auto& s = addSection ("OSC A", false, 0, 1.0f);
         s.column.push_back (&makeChoice (id::oscATable, false)->box);
-        s.column.push_back (&makeChoice (id::oscAWarp, false)->box);
         s.column.push_back (&importButtons[0]);
+        s.column.push_back (&makeChoice (id::oscAWarp, false)->box);
+        s.column.push_back (&makeChoice (id::oscAXmodType, false)->box);
+        s.column.push_back (&makeChoice (id::oscAXmodSource, false)->box);
+        s.columnsInColumn = 2;
+        s.columnWidth = 112;
+        s.displayShare = 0.3f;
         s.display = &waveA;
-        s.knobs = makeKnobs (false, { { id::oscAPos, "POSITION" }, { id::oscAWarpAmount, "WARP" }, { id::oscAUnison, "UNISON" }, { id::oscADetune, "DETUNE" }, { id::oscAWidth, "WIDTH" },
+        s.knobs = makeKnobs (false, { { id::oscAPos, "POSITION" }, { id::oscAWarpAmount, "WARP" }, { id::oscAXmodAmount, "FM/RING" }, { id::oscAUnison, "UNISON" }, { id::oscADetune, "DETUNE" }, { id::oscAWidth, "WIDTH" },
                                       { id::oscAPitch, "PITCH" }, { id::oscAFine, "FINE" }, { id::oscALevel, "LEVEL" } });
         addChildComponent (waveA);
     }
     {
         auto& s = addSection ("OSC B", false, 1, 1.0f);
         s.column.push_back (&makeChoice (id::oscBTable, false)->box);
-        s.column.push_back (&makeChoice (id::oscBWarp, false)->box);
         s.column.push_back (&importButtons[1]);
+        s.column.push_back (&makeChoice (id::oscBWarp, false)->box);
+        s.column.push_back (&makeChoice (id::oscBXmodType, false)->box);
+        s.column.push_back (&makeChoice (id::oscBXmodSource, false)->box);
+        s.columnsInColumn = 2;
+        s.columnWidth = 112;
+        s.displayShare = 0.3f;
         s.display = &waveB;
-        s.knobs = makeKnobs (false, { { id::oscBPos, "POSITION" }, { id::oscBWarpAmount, "WARP" }, { id::oscBUnison, "UNISON" }, { id::oscBDetune, "DETUNE" }, { id::oscBWidth, "WIDTH" },
+        s.knobs = makeKnobs (false, { { id::oscBPos, "POSITION" }, { id::oscBWarpAmount, "WARP" }, { id::oscBXmodAmount, "FM/RING" }, { id::oscBUnison, "UNISON" }, { id::oscBDetune, "DETUNE" }, { id::oscBWidth, "WIDTH" },
                                       { id::oscBPitch, "PITCH" }, { id::oscBFine, "FINE" }, { id::oscBLevel, "LEVEL" } });
         addChildComponent (waveB);
     }
