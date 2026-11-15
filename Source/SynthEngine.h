@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 
+#include "Filter.h"
 #include "Modulation.h"
 #include "Tuning.h"
 #include "Wavetables.h"
@@ -113,6 +114,9 @@ struct EngineParams
     float vibRateHz = 6.2f;
     float vibDelaySec = 0.22f;
     float bendRange = 2.0f;    // semitones
+    float tuneHz = 440.0f;     // frequency of the A above middle C
+    bool mpe = true;           // channels 2 to 16 carry one note each, with their own bend, pressure and timbre
+    float mpeBendRange = 48.0f; // semitones, per-note bend in MPE mode
     float glideSec = 0.045f;
     bool mono = true;
 
@@ -128,6 +132,7 @@ struct EngineParams
     float ornChance = 1.0f;
 
     // Filter and envelopes
+    int filterType = filter::lowPass12;
     float cutoffHz = 3200.0f;
     float resonance = 0.25f;
     float filterEnv = 0.35f;   // -1..1, scaled to +/- 5 octaves
@@ -139,6 +144,7 @@ struct EngineParams
 struct NoteEvent
 {
     int note = 60;
+    int channel = 1;           // MIDI channel, 1 to 16
     float pitch = 60.0f;       // tuned pitch as a fractional MIDI note
     float stepAbove = 1.0f;    // semitones up to the next scale degree
     float velocity = 1.0f;
@@ -156,8 +162,7 @@ public:
         sampleRate = newSampleRate;
         ampEnv.setSampleRate (newSampleRate);
         fltEnv.setSampleRate (newSampleRate);
-        filter.prepare ({ newSampleRate, 64, 2 });
-        filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+        filter.prepare (newSampleRate);
 
         // Plucked strings: long enough for the lowest note at this sample rate.
         size_t length = 1024;
@@ -181,6 +186,20 @@ public:
     bool isActive() const noexcept { return ampEnv.isActive(); }
     bool isHeld() const noexcept { return held; }
     int getNote() const noexcept { return note; }
+    int getChannel() const noexcept { return channel; }
+
+    /** Per-note expression from the note's MIDI channel: bend in semitones, pressure 0..1 and
+        timbre -1..1. Called before every chunk; the values glide, except right after a note starts. */
+    void setExpression (float bendTarget, float pressureTarget, float timbreTarget, float coeff) noexcept
+    {
+        if (expressionSnap)
+            coeff = 1.0f;
+
+        noteBend += (bendTarget - noteBend) * coeff;
+        notePressure += (pressureTarget - notePressure) * coeff;
+        noteTimbre += (timbreTarget - noteTimbre) * coeff;
+        expressionSnap = false;
+    }
     juce::uint64 getAge() const noexcept { return age; }
 
     void start (const NoteEvent& e, juce::uint64 newAge, const EngineParams& p, bool glideFromCurrent)
@@ -189,6 +208,7 @@ public:
         setNote (e);
         velocity = e.velocity;
         age = newAge;
+        expressionSnap = true;
 
         if (! (glideFromCurrent && wasActive))
             currentPitch = targetPitch;
@@ -248,13 +268,15 @@ public:
         fltEnv.noteOff();
     }
 
-    /** Adds this voice to `out` (mono). `bend` is the pitch wheel offset in semitones.
+    /** Adds this voice to `out` and `outRight`. `globalBend` is the pitch wheel and tuning offset in semitones.
         `sources` holds the shared modulation sources (LFOs, mod wheel, macros) indexed by
         mod::Source, or is null when no modulation slot is in use. */
-    void render (float* out, float* outRight, int numSamples, const EngineParams& base, float bend, const float* sources = nullptr)
+    void render (float* out, float* outRight, int numSamples, const EngineParams& base, float globalBend, const float* sources = nullptr)
     {
         if (! isActive())
             return;
+
+        const float bend = globalBend + noteBend;
 
         // Apply the modulation matrix to a copy of the parameters for this chunk.
         EngineParams modulated;
@@ -268,6 +290,8 @@ public:
             src[mod::srcNone] = 0.0f;
             src[mod::srcFilterEnv] = lastFilterEnv;
             src[mod::srcVelocity] = velocity;
+            src[mod::srcPressure] = notePressure;
+            src[mod::srcTimbre] = noteTimbre;
 
             float dest[mod::numDests] {};
             for (const auto& slot : base.slots)
@@ -321,8 +345,7 @@ public:
         const float keyTrack = (currentPitch - 60.0f) / 12.0f * 0.35f;
         const float cutoff = juce::jlimit (20.0f, 0.45f * sr,
                                            p.cutoffHz * std::exp2 (p.filterEnv * 5.0f * envNow + keyTrack));
-        filter.setCutoffFrequency (cutoff);
-        filter.setResonance (0.5f + p.resonance * p.resonance * 9.0f);
+        filter.set (p.filterType, cutoff, p.resonance);
 
         ModelCoeffs mc;
         if (p.engineLevel > 0.0f)
@@ -585,6 +608,7 @@ private:
     void setNote (const NoteEvent& e)
     {
         note = e.note;
+        channel = juce::jlimit (1, 16, e.channel);
         targetPitch = e.pitch;
         stepAbove = e.stepAbove;
         ornament = e.ornament;
@@ -1292,10 +1316,12 @@ private:
 
     double sampleRate = 44100.0;
     juce::ADSR ampEnv, fltEnv;
-    juce::dsp::StateVariableTPTFilter<float> filter;
+    VoiceFilter filter;
     juce::Random random;
 
-    int note = -1;
+    int note = -1, channel = 1;
+    float noteBend = 0.0f, notePressure = 0.0f, noteTimbre = 0.0f;
+    bool expressionSnap = true;
     bool held = false;
     float velocity = 1.0f;
     juce::uint64 age = 0;
@@ -1346,6 +1372,7 @@ public:
         bendCoeff = 1.0f - std::exp (-1.0f / (0.004f * (float) sampleRate / (float) chunkSize));
         wheelSmooth = 0.0f;
         wheelTarget = 0.0f;
+        clearExpression();
         for (auto& lfo : lfos)
             lfo.reset();
         heldNotes.clear();
@@ -1357,8 +1384,12 @@ public:
         if (newParams.mono != params.mono || newParams.model != params.model)
             allNotesOff();
 
+        if (newParams.mpe != params.mpe)
+            clearExpression();
+
         params = newParams;
         tuning.set (params.scaleRoot, params.scale, params.snap);
+        tuneOffset = 12.0f * std::log2 (juce::jlimit (200.0f, 900.0f, params.tuneHz) / 440.0f);
 
         modActive = false;
         for (const auto& slot : params.slots)
@@ -1429,7 +1460,18 @@ private:
             bool anyHeld = false;
             for (auto& v : voices)
             {
-                v.render (mix.data() + start, mixRight.data() + start, n, params, bendSmooth, modActive ? sources : nullptr);
+                if (v.isActive())
+                {
+                    // Channel 1 is the MPE master channel: what it sends applies to every note.
+                    const auto ch = (size_t) (v.getChannel() - 1);
+                    const bool own = params.mpe && ch > 0;
+                    v.setExpression (own ? channelBend[ch] : 0.0f,
+                                     juce::jmin (1.0f, channelPressure[0] + (own ? channelPressure[ch] : 0.0f)),
+                                     juce::jlimit (-1.0f, 1.0f, channelTimbre[0] + (own ? channelTimbre[ch] : 0.0f)),
+                                     bendCoeff);
+                }
+
+                v.render (mix.data() + start, mixRight.data() + start, n, params, bendSmooth + tuneOffset, modActive ? sources : nullptr);
                 anyHeld = anyHeld || v.isHeld();
             }
 
@@ -1453,7 +1495,7 @@ private:
         }
 
         const float levelCoeff = 1.0f - std::exp (-1.0f / ((anyHeld ? 0.08f : 0.35f) * sr));
-        const float pitch = 36.0f + (float) params.scaleRoot + params.macro[1];
+        const float pitch = 36.0f + (float) params.scaleRoot + params.macro[1] + tuneOffset;
         const float inc = 440.0f * std::exp2 ((pitch - 69.0f) / 12.0f) / sr;
         const float lpCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 1400.0f / sr);
 
@@ -1473,12 +1515,25 @@ private:
 
     void handleMidi (const juce::MidiMessage& m)
     {
+        // Without MPE every channel is treated like channel 1.
+        const auto ch = (size_t) (params.mpe ? juce::jlimit (1, 16, m.getChannel()) - 1 : 0);
+
         if (m.isNoteOn())
-            noteOn (m.getNoteNumber(), m.getFloatVelocity());
+            noteOn (m.getNoteNumber(), m.getFloatVelocity(), (int) ch + 1);
         else if (m.isNoteOff())
             noteOff (m.getNoteNumber());
         else if (m.isPitchWheel())
-            bendTarget = ((float) m.getPitchWheelValue() - 8192.0f) / 8192.0f * params.bendRange;
+        {
+            const float amount = ((float) m.getPitchWheelValue() - 8192.0f) / 8192.0f;
+            if (ch == 0)
+                bendTarget = amount * params.bendRange;
+            else
+                channelBend[ch] = amount * params.mpeBendRange;
+        }
+        else if (m.isChannelPressure())
+            channelPressure[ch] = (float) m.getChannelPressureValue() / 127.0f;
+        else if (m.isController() && m.getControllerNumber() == 74)
+            channelTimbre[ch] = juce::jlimit (-1.0f, 1.0f, ((float) m.getControllerValue() - 64.0f) / 63.0f);
         else if (m.isController() && m.getControllerNumber() == 1)
             wheelTarget = (float) m.getControllerValue() / 127.0f;
         else if (m.isAllNotesOff() || m.isAllSoundOff())
@@ -1486,10 +1541,11 @@ private:
     }
 
     /** Builds the note a voice should play: tuned pitch plus the ornament chosen for it. */
-    NoteEvent makeEvent (int note, float velocity, bool allowOrnament)
+    NoteEvent makeEvent (int note, float velocity, bool allowOrnament, int channel)
     {
         NoteEvent e;
         e.note = note;
+        e.channel = channel;
         e.velocity = velocity;
         e.pitch = tuning.pitchFor (note);
         e.stepAbove = tuning.stepAbove (note);
@@ -1513,10 +1569,11 @@ private:
         return e;
     }
 
-    void noteOn (int note, float velocity)
+    void noteOn (int note, float velocity, int channel)
     {
         ++counter;
-        const auto e = makeEvent (note, velocity, true);
+        const auto e = makeEvent (note, velocity, true, channel);
+        noteChannel[(size_t) juce::jlimit (0, 127, note)] = channel;
 
         if (params.mono)
         {
@@ -1562,7 +1619,7 @@ private:
             if (heldNotes.empty())
                 voices[0].release();
             else if (voices[0].getNote() == note)
-                voices[0].slideTo (makeEvent (heldNotes.back(), 1.0f, false)); // falling back to a held note is never ornamented
+                voices[0].slideTo (makeEvent (heldNotes.back(), 1.0f, false, noteChannel[(size_t) juce::jlimit (0, 127, heldNotes.back())])); // falling back to a held note is never ornamented
 
             return;
         }
@@ -1580,6 +1637,18 @@ private:
     juce::Random random;
     juce::uint64 counter = 0;
     float bendSmooth = 0.0f, bendTarget = 0.0f, bendCoeff = 1.0f;
+    float tuneOffset = 0.0f; // semitones, from the A4 reference
+
+    // Per-channel expression for MPE; index 0 is channel 1, the master channel.
+    std::array<float, 16> channelBend {}, channelPressure {}, channelTimbre {};
+    std::array<int, 128> noteChannel {};
+
+    void clearExpression() noexcept
+    {
+        channelBend.fill (0.0f);
+        channelPressure.fill (0.0f);
+        channelTimbre.fill (0.0f);
+    }
     float engineSampleRate = 44100.0f, droneLevel = 0.0f, droneLp = 0.0f, dronePhase = 0.0f;
 
     std::array<Lfo, mod::numLfos> lfos;

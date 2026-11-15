@@ -154,7 +154,29 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         s.column.push_back (&makeToggle (id::snap, "SNAP TO SCALE", true)->button);
     }
     {
-        auto& s = addSection ("ORNAMENTS", true, 1, 8.0f);
+        // The reference pitch is a number box, so an exact value such as 432 can be typed in.
+        tuneBox.setSliderStyle (juce::Slider::IncDecButtons);
+        tuneBox.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
+        tuneBox.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 78, 22);
+        tuneBox.setColour (juce::Slider::textBoxTextColourId, colour::text);
+        tuneBox.setColour (juce::Slider::textBoxBackgroundColourId, colour::background);
+        tuneBox.setColour (juce::Slider::textBoxOutlineColourId, colour::panelBorder);
+        tuneBox.setColour (juce::Slider::textBoxHighlightColourId, colour::track);
+        tuneBox.setColour (juce::TextButton::buttonColourId, colour::knob);
+        tuneBox.setColour (juce::TextButton::textColourOffId, colour::text);
+        tuneBox.setTooltip ("Frequency of the A above middle C. Click the number to type a value, for example 432.");
+        tuneAttachment = std::make_unique<APVTS::SliderAttachment> (processor.apvts, id::tuneA4, tuneBox);
+        tuneBox.setTextValueSuffix (" Hz");
+        addChildComponent (tuneBox);
+
+        auto& s = addSection ("TUNING A4 / MPE", false, 1, 3.4f);
+        s.columnWidth = 132;
+        s.column.push_back (&tuneBox);
+        s.column.push_back (&makeToggle (id::mpe, "MPE", false)->button);
+        s.knobs = makeKnobs (false, { { id::mpeBend, "MPE BEND" } });
+    }
+    {
+        auto& s = addSection ("ORNAMENTS", true, 1, 7.0f);
         s.columnsInColumn = 2;
         s.column.push_back (&makeToggle (id::ornGrace, "GRACE", true)->button);
         s.column.push_back (&makeToggle (id::ornMordent, "MORDENT", true)->button);
@@ -178,10 +200,21 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     }
 
     // Row 3: filter, envelopes, output.
-    addSection ("FILTER", false, 3, 3.4f).knobs = makeKnobs (false, { { id::cutoff, "CUTOFF" }, { id::resonance, "RES" }, { id::filterEnv, "ENV" } });
-    addSection ("AMP ENV", false, 3, 4.4f).knobs = makeKnobs (false, { { id::ampA, "A" }, { id::ampD, "D" }, { id::ampS, "S" }, { id::ampR, "R" } });
-    addSection ("FILTER ENV", false, 3, 4.4f).knobs = makeKnobs (false, { { id::fltA, "A" }, { id::fltD, "D" }, { id::fltS, "S" }, { id::fltR, "R" } });
-    addSection ("OUT", false, 3, 1.4f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
+    {
+        auto& s = addSection ("FILTER", false, 3, 4.6f);
+        s.columnWidth = 118;
+        s.column.push_back (&makeChoice (id::filterType, false)->box);
+        s.knobs = makeKnobs (false, { { id::cutoff, "CUTOFF" }, { id::resonance, "RES" }, { id::filterEnv, "ENV" } });
+    }
+
+    // The envelopes are drawn as curves with handles to drag.
+    ampEnvDisplay.setParameters (processor.apvts, id::ampA, id::ampD, id::ampS, id::ampR);
+    filterEnvDisplay.setParameters (processor.apvts, id::fltA, id::fltD, id::fltS, id::fltR);
+    addSection ("AMP ENV", false, 3, 4.0f).display = &ampEnvDisplay;
+    addSection ("FILTER ENV", false, 3, 4.0f).display = &filterEnvDisplay;
+    addChildComponent (ampEnvDisplay);
+    addChildComponent (filterEnvDisplay);
+    addSection ("OUT", false, 3, 1.3f).knobs = makeKnobs (false, { { id::level, "LEVEL" } });
 
     // OSC page: two wavetable oscillators, sub, noise and the level of the Balkan engine.
     buildingPage = 1;
@@ -466,6 +499,7 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
         t->button.setVisible (false);
     for (auto& c : choices)
         c->box.setVisible (false);
+    tuneBox.setVisible (false);
     for (auto& s : sections)
         if (s.display != nullptr)
             s.display->setVisible (false);
@@ -523,6 +557,9 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     }
     if (levelMeter.clipHold > 0 && --levelMeter.clipHold == 0)
         meterChanged = true;
+    ampEnvDisplay.refresh();
+    filterEnvDisplay.refresh();
+
     if (meterChanged && levelMeter.isVisible())
         levelMeter.repaint();
 
@@ -610,6 +647,245 @@ void AMVSynthAudioProcessorEditor::WaveDisplay::paint (juce::Graphics& g)
     // An oscillator that is turned down is drawn dimmed.
     g.setColour (colour::teal.withAlpha (active ? 1.0f : 0.4f));
     g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::setParameters (APVTS& apvts, const char* attack, const char* decay,
+                                                                   const char* sustain, const char* release)
+{
+    params = { apvts.getParameter (attack), apvts.getParameter (decay), apvts.getParameter (sustain), apvts.getParameter (release) };
+}
+
+juce::Rectangle<float> AMVSynthAudioProcessorEditor::EnvelopeDisplay::graphArea() const
+{
+    // The bottom strip holds the values as text.
+    return getLocalBounds().toFloat().withTrimmedBottom (18.0f).reduced (9.0f, 8.0f);
+}
+
+float AMVSynthAudioProcessorEditor::EnvelopeDisplay::segmentWidth() const
+{
+    // Attack, decay and release each get up to this much room; the held part has a fixed width.
+    return graphArea().getWidth() * 0.29f;
+}
+
+std::array<juce::Point<float>, 5> AMVSynthAudioProcessorEditor::EnvelopeDisplay::points() const
+{
+    const auto area = graphArea();
+    const float seg = segmentWidth(), hold = area.getWidth() - 3.0f * seg;
+    const float a = params[0]->getValue(), d = params[1]->getValue(), s = params[2]->getValue(), r = params[3]->getValue();
+    const float sustainY = area.getBottom() - s * area.getHeight();
+
+    std::array<juce::Point<float>, 5> p;
+    p[0] = { area.getX(), area.getBottom() };
+    p[1] = { p[0].x + a * seg, area.getY() };
+    p[2] = { p[1].x + d * seg, sustainY };
+    p[3] = { p[2].x + hold, sustainY };
+    p[4] = { p[3].x + r * seg, area.getBottom() };
+    return p;
+}
+
+int AMVSynthAudioProcessorEditor::EnvelopeDisplay::handleAt (juce::Point<float> position) const
+{
+    const auto p = points();
+    const juce::Point<float> handles[3] { p[1], p[2], p[4] };
+    int best = none;
+    float bestDistance = 14.0f;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        const float distance = handles[i].getDistanceFrom (position);
+        if (distance < bestDistance)
+        {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+
+    return best;
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::set (juce::RangedAudioParameter* param, float normalised)
+{
+    param->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, normalised));
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::refresh()
+{
+    bool changed = false;
+    for (size_t i = 0; i < params.size(); ++i)
+    {
+        const float v = params[i]->getValue();
+        changed = changed || std::abs (v - shown[i]) > 1.0e-6f;
+        shown[i] = v;
+    }
+
+    if (changed)
+        repaint();
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    const auto bounds = getLocalBounds().toFloat();
+    g.setColour (colour::background);
+    g.fillRoundedRectangle (bounds, 6.0f);
+
+    const auto area = graphArea();
+    const auto p = points();
+
+    g.setColour (colour::track.withAlpha (0.6f));
+    for (int i = 1; i < 4; ++i)
+        g.drawHorizontalLine (juce::roundToInt (area.getY() + area.getHeight() * (float) i / 4.0f), area.getX(), area.getRight());
+
+    juce::Path curve;
+    curve.startNewSubPath (p[0]);
+    for (size_t i = 1; i < p.size(); ++i)
+        curve.lineTo (p[i]);
+
+    juce::Path fill (curve);
+    fill.lineTo (p[0]);
+    fill.closeSubPath();
+    g.setGradientFill (juce::ColourGradient (colour::teal.withAlpha (0.32f), 0.0f, area.getY(),
+                                             colour::teal.withAlpha (0.03f), 0.0f, area.getBottom(), false));
+    g.fillPath (fill);
+
+    g.setColour (colour::teal);
+    g.strokePath (curve, juce::PathStrokeType (1.8f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+
+    // The held part is not a setting of its own, so it has no handle.
+    const juce::Point<float> handles[3] { p[1], p[2], p[4] };
+    for (int i = 0; i < 3; ++i)
+    {
+        const bool active = i == hover || i == dragging;
+        const float radius = active ? 5.5f : 4.0f;
+        g.setColour (colour::background);
+        g.fillEllipse (handles[i].x - radius, handles[i].y - radius, radius * 2.0f, radius * 2.0f);
+        g.setColour (active ? colour::text : colour::teal);
+        g.drawEllipse (handles[i].x - radius, handles[i].y - radius, radius * 2.0f, radius * 2.0f, 1.8f);
+    }
+
+    // Values along the bottom; the one being changed is highlighted.
+    static const char* names[4] { "A", "D", "S", "R" };
+    auto textArea = bounds.withTop (bounds.getBottom() - 19.0f).reduced (6.0f, 0.0f);
+    const float cell = textArea.getWidth() / 4.0f;
+    const int active = dragging != none ? dragging : hover;
+    g.setFont (juce::FontOptions (10.5f));
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const bool lit = (active == attackHandle && i == 0) || (active == decayHandle && (i == 1 || i == 2))
+                         || (active == releaseHandle && i == 3);
+        juce::String value;
+        if (i == 2)
+            value = juce::String (juce::roundToInt (params[2]->getValue() * 100.0f)) + "%";
+        else
+        {
+            const float ms = params[(size_t) i]->convertFrom0to1 (params[(size_t) i]->getValue());
+            value = ms < 10.0f ? juce::String (ms, 1) + " ms" : ms < 1000.0f ? juce::String (juce::roundToInt (ms)) + " ms"
+                                                                           : juce::String (ms * 0.001f, 2) + " s";
+        }
+
+        g.setColour (lit ? colour::text : colour::dimText);
+        g.drawText (juce::String (names[i]) + " " + value, textArea.removeFromLeft (cell), juce::Justification::centred);
+    }
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    const int handle = handleAt (e.position);
+    if (handle != hover)
+    {
+        hover = handle;
+        setMouseCursor (handle == none ? juce::MouseCursor::NormalCursor : juce::MouseCursor::DraggingHandCursor);
+        repaint();
+    }
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseExit (const juce::MouseEvent&)
+{
+    if (hover != none)
+    {
+        hover = none;
+        repaint();
+    }
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    dragging = handleAt (e.position);
+
+    if (dragging == attackHandle)
+        params[0]->beginChangeGesture();
+    else if (dragging == decayHandle)
+    {
+        params[1]->beginChangeGesture();
+        params[2]->beginChangeGesture();
+    }
+    else if (dragging == releaseHandle)
+        params[3]->beginChangeGesture();
+
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragging == none)
+        return;
+
+    const auto area = graphArea();
+    const auto p = points();
+    const float seg = segmentWidth();
+
+    // Each handle moves relative to the point before it, like the curve itself.
+    if (dragging == attackHandle)
+        set (params[0], (e.position.x - p[0].x) / seg);
+    else if (dragging == decayHandle)
+    {
+        set (params[1], (e.position.x - p[1].x) / seg);
+        set (params[2], (area.getBottom() - e.position.y) / area.getHeight());
+    }
+    else
+        set (params[3], (e.position.x - p[3].x) / seg);
+
+    refresh();
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseUp (const juce::MouseEvent&)
+{
+    if (dragging == attackHandle)
+        params[0]->endChangeGesture();
+    else if (dragging == decayHandle)
+    {
+        params[1]->endChangeGesture();
+        params[2]->endChangeGesture();
+    }
+    else if (dragging == releaseHandle)
+        params[3]->endChangeGesture();
+
+    dragging = none;
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const int handle = handleAt (e.position);
+    const auto reset = [] (juce::RangedAudioParameter* param)
+    {
+        param->beginChangeGesture();
+        param->setValueNotifyingHost (param->getDefaultValue());
+        param->endChangeGesture();
+    };
+
+    if (handle == attackHandle)
+        reset (params[0]);
+    else if (handle == decayHandle)
+    {
+        reset (params[1]);
+        reset (params[2]);
+    }
+    else if (handle == releaseHandle)
+        reset (params[3]);
+
+    refresh();
 }
 
 void AMVSynthAudioProcessorEditor::PatternDisplay::paint (juce::Graphics& g)
@@ -718,7 +994,11 @@ void AMVSynthAudioProcessorEditor::layoutSection (Section& s)
 
     if (s.display != nullptr)
     {
-        s.display->setBounds (inner.removeFromLeft (inner.getWidth() * 2 / 5).reduced (0, 6));
+        // Without knobs the display takes the whole panel.
+        if (s.knobs.empty())
+            s.display->setBounds (inner.withTrimmedBottom (2));
+        else
+            s.display->setBounds (inner.removeFromLeft (inner.getWidth() * 2 / 5).reduced (0, 6));
         inner.removeFromLeft (10);
     }
 

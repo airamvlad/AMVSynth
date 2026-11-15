@@ -6,13 +6,16 @@ What it does:
 
 - Seventeen models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval, gajde with a drone on the scale root, zurla, tambura (plucked string), tapan (drum), dvojnice (double flute), clarinet, truba (brass), violin, šargija with a drone string, kanun with tremolo picking, darbuka and a sung voice
 - Two wavetable oscillators (Basic Shapes, Acid Saw, PWM, Vowels, Kaval, Zurla, Reeds, Bells) with up to 7 voice unison spread in stereo, plus a sub oscillator and noise, on their own page and mixed with the Balkan engine
-- Modulation on its own page: two LFOs (free or tempo-synced), four macros and a six slot matrix with LFOs, filter envelope, velocity, mod wheel and macros as sources
+- Modulation on its own page: two LFOs (free or tempo-synced), four macros and a six slot matrix with LFOs, filter envelope, velocity, mod wheel, macros, pressure and timbre as sources
 - Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
 - Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Ornaments played automatically: grace note, mordent, trill and fall
-- Mono legato or 16 voices, glide, delayed vibrato, pitch bend, low-pass filter and two envelopes
+- Mono legato or 16 voices, glide, delayed vibrato, pitch bend
+- Seven filter types (low pass and high pass at 12 and 24 dB, band pass, notch, comb) and two envelopes that are drawn as curves and edited by dragging
+- Reference pitch from 400 to 480 Hz (type 432 for A4 = 432 Hz); it belongs to the project and stays when you change presets
+- MPE: per-note pitch bend, pressure and timbre on channels 2 to 16, so Bitwig's Micro-pitch and MPE controllers work. In Bitwig switch on "Use MPE" for the plugin and leave the bend range at 48
 
 ## Formats
 

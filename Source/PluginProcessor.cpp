@@ -110,6 +110,10 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.bendRange = value (id::bendRange);
     p.glideSec = value (id::glide) * 0.001f;
     p.mono = value (id::mono) > 0.5f;
+    p.tuneHz = value (id::tuneA4);
+    p.mpe = value (id::mpe) > 0.5f;
+    p.mpeBendRange = value (id::mpeBend);
+    p.filterType = juce::roundToInt (value (id::filterType));
     p.cutoffHz = value (id::cutoff);
     p.resonance = value (id::resonance);
     p.filterEnv = value (id::filterEnv);
@@ -279,7 +283,19 @@ bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
 
     // Start from the defaults so a file from an older version leaves no stale values behind.
     amv::applyPreset (apvts, amv::getFactoryPresets().front());
+
+    // Tuning and MPE settings stay as they are in the project.
+    std::vector<std::pair<juce::RangedAudioParameter*, float>> kept;
+    for (auto* p : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (amv::isGlobalParameter (ranged->getParameterID()))
+                kept.emplace_back (ranged, ranged->getValue());
+
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+    for (const auto& [param, normalised] : kept)
+        param->setValueNotifyingHost (normalised);
+
     return true;
 }
 
