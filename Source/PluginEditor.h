@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "SampleDisplay.h"
 #include "WavetableEditor.h"
 
 namespace amv
@@ -244,8 +245,8 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
-    std::array<juce::TextButton, 6> tabs;
-    static constexpr std::array<int, 6> tabPages { 0, 1, 5, 2, 3, 4 }; // the page each tab shows; WAVE was added last
+    std::array<juce::TextButton, 7> tabs;
+    static constexpr std::array<int, 7> tabPages { 0, 1, 5, 6, 2, 3, 4 }; // the page each tab shows; WAVE and SAMPLE were added last
     int currentPage = 0, buildingPage = 0;
 
     juce::ComboBox presetBox;
@@ -261,6 +262,18 @@ private:
     juce::TooltipWindow tooltipWindow { this };
     std::array<juce::TextButton, 2> importButtons;
     WavetableEditor waveEditor { processor };
+
+    // SAMPLE page.
+    enum SampleTool { toolLoad, toolNormalise, toolCrop, toolFade, toolFindRoot, toolToWaveA, toolToWaveB, toolClear, numSampleTools };
+    SampleDisplay sampleDisplay { processor };
+    std::array<juce::TextButton, numSampleTools> sampleButtons;
+    TextDisplay sampleInfo;
+    const amv::SampleData* infoFor = nullptr;
+    bool infoShown = false;
+    void runSampleTool (int tool);
+    void updateSampleInfo();
+    void setParameterValue (const char* paramId, float value);
+    bool hasSourceBar() const noexcept { return currentPage < 4 || currentPage == 6; }
 
     // Modulation by drag and drop.
     std::vector<Assignment> assignmentsFor (int dest) const;

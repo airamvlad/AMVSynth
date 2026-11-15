@@ -5,6 +5,7 @@
 #include "SynthEngine.h"
 
 #include <cstdio>
+#include <functional>
 
 namespace
 {
@@ -1007,6 +1008,240 @@ int main()
             check (near (offWithAmount.peak, plain.peak, 1.0e-6f), "the warp amount does nothing while warp is off");
             check (finite && silentTail, "every warp mode stays finite and bounded");
             check (changes, "every warp mode changes the wave");
+        }
+
+        // Sampler
+        {
+            const double rate = 44100.0;
+            const auto makeSample = [rate] (double seconds, const std::function<float (int, int)>& fn)
+            {
+                juce::AudioBuffer<float> b (1, (int) (seconds * rate));
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                    b.setSample (0, i, fn (i, b.getNumSamples()));
+                return SampleData::fromBuffer (b, rate, "test");
+            };
+            const auto sine = [] (float hz) { return [hz] (int i, int) { return 0.8f * std::sin (juce::MathConstants<float>::twoPi * hz * (float) i / 44100.0f); }; };
+
+            // Plays A3 for `blocks` blocks of 512 samples at 48 kHz and returns the left channel.
+            const auto playSample = [] (SamplerParams smp, int blocks, std::vector<float>* right = nullptr)
+            {
+                EngineParams p;
+                p.engineLevel = 0.0f;
+                p.cutoffHz = 20000.0f;
+                p.resonance = 0.0f;
+                p.filterEnv = 0.0f;
+                p.vibDepthCents = 0.0f;
+                p.amp = { 0.001f, 0.1f, 1.0f, 0.05f };
+                p.sampler = smp;
+
+                SynthEngine engine;
+                engine.prepare (48000.0, 512);
+                engine.setRandomSeed (3);
+                engine.setParams (p);
+                std::vector<float> out;
+                for (int block = 0; block < blocks; ++block)
+                {
+                    juce::MidiBuffer midi;
+                    if (block == 0)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, 57, 1.0f), 0);
+                    juce::AudioBuffer<float> buffer (2, 512);
+                    buffer.clear();
+                    engine.process (buffer, midi);
+                    out.insert (out.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + 512);
+                    if (right != nullptr)
+                        right->insert (right->end(), buffer.getReadPointer (1), buffer.getReadPointer (1) + 512);
+                }
+                return out;
+            };
+            const auto hzOf = [] (const std::vector<float>& out, size_t from, size_t to)
+            {
+                double first = -1.0, last = -1.0;
+                int crossings = 0;
+                for (size_t i = from; i + 1 < to; ++i)
+                    if (out[i] < 0.0f && out[i + 1] >= 0.0f)
+                    {
+                        last = (double) i + (double) out[i] / ((double) out[i] - (double) out[i + 1]);
+                        if (first < 0.0)
+                            first = last;
+                        else
+                            ++crossings;
+                    }
+                return crossings > 0 ? (float) (48000.0 * crossings / (last - first)) : 0.0f;
+            };
+            const auto peakOf = [] (const std::vector<float>& out, size_t from, size_t to)
+            {
+                float peak = 0.0f;
+                for (size_t i = from; i < to && i < out.size(); ++i)
+                    peak = std::isfinite (out[i]) ? juce::jmax (peak, std::abs (out[i])) : 1.0e9f;
+                return peak;
+            };
+
+            juce::AudioBuffer<float> tiny (1, 8);
+            check (SampleData::fromBuffer (tiny, rate, "tiny") == nullptr, "a sample that is too short is refused");
+
+            const auto tone = makeSample (1.0, sine (100.0f)); // 100 whole cycles, so the loop is seamless
+            SamplerParams smp;
+            smp.data = tone.get();
+            smp.level = 1.0f;
+            smp.rootNote = 57;
+            smp.loop = sampler::loopForward;
+
+            {
+                const auto out = playSample (smp, 200);
+                const float hz = hzOf (out, 4800, out.size());
+                std::printf ("      sampler at its root: %.3f Hz, peak %.3f\n", (double) hz, (double) peakOf (out, 4800, out.size()));
+                check (near (hz, 100.0f, 0.05f) && peakOf (out, 4800, out.size()) > 0.5f, "the sampler plays the sample at its own pitch on the root key, at any sample rate");
+
+                auto up = smp;
+                up.pitch = 12.0f;
+                check (near (hzOf (playSample (up, 100), 4800, 51200), 200.0f, 0.1f), "sampler pitch transposes the sample");
+
+                up.rootNote = 45; // the root an octave below the played key
+                up.pitch = 0.0f;
+                check (near (hzOf (playSample (up, 100), 4800, 51200), 200.0f, 0.1f), "the sampler follows the keyboard from its root note");
+
+                up.keyTrack = false;
+                check (near (hzOf (playSample (up, 100), 4800, 51200), 100.0f, 0.05f), "without key tracking every key plays the sample as it is");
+            }
+
+            // Without a loop the sample ends, with a loop it goes on.
+            {
+                auto once = smp;
+                once.loop = sampler::loopOff;
+                once.end = 0.25f;
+                const auto out = playSample (once, 60);
+                check (peakOf (out, 2400, 9600) > 0.5f && peakOf (out, 14400, out.size()) < 1.0e-5f, "a sample without a loop stops at END");
+
+                auto looped = once;
+                looped.loop = sampler::loopPingPong;
+                looped.loopStart = 0.05f;
+                looped.loopEnd = 0.2f;
+                const auto pong = playSample (looped, 200);
+                check (peakOf (pong, 60000, pong.size()) > 0.5f && peakOf (pong, 0, pong.size()) < 2.0f, "a ping pong loop keeps the sample going");
+            }
+
+            // Reverse starts at the end.
+            {
+                const auto late = makeSample (1.0, [] (int i, int n) { return i > n * 3 / 4 ? 0.8f * std::sin (0.05f * (float) i) : 0.0f; });
+                auto p = smp;
+                p.data = late.get();
+                p.loop = sampler::loopOff;
+                const auto forward = playSample (p, 20);
+                p.reverse = true;
+                const auto backward = playSample (p, 20);
+                check (peakOf (forward, 0, forward.size()) < 1.0e-5f && peakOf (backward, 0, backward.size()) > 0.5f, "reverse plays the sample from its end");
+            }
+
+            // A loop that does not fit the wave clicks; the crossfade removes the jump.
+            {
+                const auto jump = [] (const std::vector<float>& out)
+                {
+                    float biggest = 0.0f;
+                    for (size_t i = 4800; i + 1 < out.size(); ++i)
+                        biggest = juce::jmax (biggest, std::abs (out[i + 1] - out[i]));
+                    return biggest;
+                };
+                auto p = smp;
+                p.loopStart = 0.3f;
+                p.loopEnd = 0.5034f; // ends at another phase of the sine than it starts with
+                const float hard = jump (playSample (p, 150));
+                p.crossfade = 0.5f;
+                const float soft = jump (playSample (p, 150));
+                p.reverse = true;
+                const float softReverse = jump (playSample (p, 150));
+                std::printf ("      biggest step in the loop: %.4f without crossfade, %.4f with, %.4f reversed\n", (double) hard, (double) soft, (double) softReverse);
+                check (hard > 0.1f && soft < 0.03f && softReverse < 0.03f, "the loop crossfade removes the click at the loop point");
+            }
+
+            // Granular
+            {
+                auto g = smp;
+                g.mode = sampler::granular;
+                g.loop = sampler::loopOff;
+                g.position = 0.3f;
+                g.spray = 0.0f;
+                g.spread = 0.0f;
+                const auto frozen = playSample (g, 400);
+                const float hz = hzOf (frozen, 96000, frozen.size());
+                std::printf ("      granular, frozen: %.2f Hz, peak %.3f\n", (double) hz, (double) peakOf (frozen, 96000, frozen.size()));
+                check (peakOf (frozen, 150000, frozen.size()) > 0.2f && peakOf (frozen, 0, frozen.size()) < 2.0f,
+                       "granular mode holds a sound for as long as the key is down");
+                check (near (hz, 100.0f, 4.0f), "grains follow the pitch of the key");
+
+                // Everything turned up stays finite and bounded, and the grains spread in stereo.
+                g.spray = 1.0f;
+                g.pitchSpray = 12.0f;
+                g.spread = 1.0f;
+                g.reverseChance = 0.5f;
+                g.density = 100.0f;
+                g.grainMs = 500.0f;
+                g.scan = -2.0f;
+                g.shape = 0.0f;
+                std::vector<float> right;
+                const auto wild = playSample (g, 300, &right);
+                float difference = 0.0f;
+                for (size_t i = 0; i < wild.size(); ++i)
+                    difference = juce::jmax (difference, std::abs (wild[i] - right[i]));
+                check (peakOf (wild, 0, wild.size()) > 0.05f && peakOf (wild, 0, wild.size()) < 3.0f && peakOf (right, 0, right.size()) < 3.0f && difference > 0.05f,
+                       "dense, sprayed grains stay bounded and spread in stereo");
+
+                // Scan at 1 walks through the sample at its own speed, whatever the key.
+                const auto half = makeSample (1.0, [] (int i, int n) { return i > n / 2 ? 0.8f * std::sin (0.07f * (float) i) : 0.0f; });
+                SamplerParams walk = smp;
+                walk.data = half.get();
+                walk.mode = sampler::granular;
+                walk.loop = sampler::loopOff;
+                walk.spray = 0.0f;
+                walk.scan = 1.0f;
+                walk.pitch = 12.0f;
+                walk.grainMs = 40.0f;
+                walk.density = 50.0f;
+                const auto walked = playSample (walk, 90);
+                check (peakOf (walked, 0, 19200) < 1.0e-4f && peakOf (walked, 31200, 43200) > 0.2f, "scan moves the grain position through the sample in time");
+            }
+
+            // No sample, modulation and the tools.
+            {
+                auto none = smp;
+                none.data = nullptr;
+                const auto silent = playSample (none, 20);
+                check (peakOf (silent, 0, silent.size()) < 1.0e-9f, "the sampler is silent without a sample");
+
+                EngineParams p;
+                p.engineLevel = 0.0f;
+                p.sampler = smp;
+                p.sampler.level = 0.0f;
+                const auto off = render (p);
+                p.modMacros[0] = 1.0f;
+                p.slots[0] = { mod::srcMacro1, mod::dstSamplerLevel, 1.0f };
+                const auto on = render (p);
+                check (off.peak < 1.0e-9f && on.finite && on.peak > 0.05f && on.tailPeak < 0.001f, "a macro brings the sampler in");
+                check (modDestFor (id::smpGrainSize) == mod::dstGrainSize && modDestFor (id::smpPosition) == mod::dstGrainPosition
+                           && modDestFor (id::smpLevel) == mod::dstSamplerLevel && modDestFor (id::smpScan) == mod::dstGrainScan,
+                       "the sampler knobs are modulation destinations");
+
+                const auto a3 = makeSample (0.5, sine (220.0f));
+                juce::Random random (5);
+                const auto hiss = makeSample (0.5, [&random] (int, int) { return random.nextFloat() - 0.5f; });
+                std::printf ("      detected root: %d for a 220 Hz sine, %d for noise\n", detectRootNote (*a3), detectRootNote (*hiss));
+                check (detectRootNote (*a3) == 57 && detectRootNote (*hiss) == -1, "the root note of a sample is found from its pitch");
+
+                const auto frames = sampleToWavetable (*a3, 0.1f, 0.9f, 57, 16, 2048);
+                bool cycles = frames.size() == 16 * 2048;
+                for (int f = 0; cycles && f < 16; ++f)
+                {
+                    const float* frame = frames.data() + f * 2048;
+                    int rising = 0;
+                    float peak = 0.0f;
+                    for (int i = 0; i < 2048; ++i)
+                    {
+                        rising += frame[i] < 0.0f && frame[(i + 1) % 2048] >= 0.0f ? 1 : 0;
+                        peak = juce::jmax (peak, std::abs (frame[i]));
+                    }
+                    cycles = rising == 1 && near (peak, 0.8f, 0.02f) && std::abs (frame[2047] - frame[0]) < 0.01f;
+                }
+                check (cycles, "single cycles are cut from a sample for a wavetable");
+            }
         }
 
         // Filter types

@@ -124,6 +124,31 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.bendRange = value (id::bendRange);
     p.glideSec = value (id::glide) * 0.001f;
     p.mono = value (id::mono) > 0.5f;
+    auto& smp = p.sampler;
+    smp.data = activeSample.load (std::memory_order_acquire);
+    smp.level = value (id::smpLevel);
+    smp.mode = juce::roundToInt (value (id::smpMode));
+    smp.pitch = value (id::smpPitch);
+    smp.fineCents = value (id::smpFine);
+    smp.rootNote = juce::roundToInt (value (id::smpRoot));
+    smp.keyTrack = value (id::smpKeyTrack) > 0.5f;
+    smp.pan = value (id::smpPan);
+    smp.reverse = value (id::smpReverse) > 0.5f;
+    smp.start = value (id::smpStart);
+    smp.end = value (id::smpEnd);
+    smp.loop = juce::roundToInt (value (id::smpLoop));
+    smp.loopStart = value (id::smpLoopStart);
+    smp.loopEnd = value (id::smpLoopEnd);
+    smp.crossfade = value (id::smpCrossfade);
+    smp.position = value (id::smpPosition);
+    smp.grainMs = value (id::smpGrainSize);
+    smp.density = value (id::smpDensity);
+    smp.spray = value (id::smpSpray);
+    smp.pitchSpray = value (id::smpPitchSpray);
+    smp.scan = value (id::smpScan);
+    smp.shape = value (id::smpShape);
+    smp.spread = value (id::smpSpread);
+    smp.reverseChance = value (id::smpRevChance);
     p.userWave = { activeUserWave[0].load (std::memory_order_acquire), activeUserWave[1].load (std::memory_order_acquire) };
     p.tuneHz = value (id::tuneA4);
     p.mpe = value (id::mpe) > 0.5f;
@@ -185,6 +210,12 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const auto& shown = engine.getShownSources();
     for (size_t i = 0; i < shown.size(); ++i)
         modSourceValues[i].store (shown[i], std::memory_order_relaxed);
+
+    const float* positions = nullptr;
+    const int positionCount = engine.getShownSamplerPositions (positions);
+    for (int i = 0; i < positionCount; ++i)
+        samplerPositions[(size_t) i].store (positions[i], std::memory_order_relaxed);
+    samplerPositionCount.store (positionCount, std::memory_order_relaxed);
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (value (amv::id::level)));
     outputGain.applyGain (work, numSamples);
@@ -286,6 +317,7 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
             currentPreset = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("preset", 0));
             apvts.replaceState (state);
             restoreUserWavetables();
+            restoreSample();
         }
 }
 
@@ -410,6 +442,104 @@ void AMVSynthAudioProcessor::restoreUserWavetables()
     }
 }
 
+void AMVSynthAudioProcessor::setSample (std::unique_ptr<amv::SampleData> data)
+{
+    const auto now = juce::jmax<juce::uint32> (1, juce::Time::getMillisecondCounter());
+    const auto* previous = activeSample.exchange (data.get(), std::memory_order_acq_rel);
+
+    for (auto& stored : sampleStore)
+        if (stored.data.get() == previous && previous != nullptr)
+            stored.retiredAt = now;
+
+    if (data != nullptr)
+        sampleStore.push_back ({ std::move (data), 0 });
+
+    // A replaced sample is thrown away half a second later; the audio thread only holds one for a block.
+    sampleStore.erase (std::remove_if (sampleStore.begin(), sampleStore.end(),
+                                       [now] (const StoredSample& stored) { return stored.retiredAt != 0 && now - stored.retiredAt > 500; }),
+                       sampleStore.end());
+    storeSample();
+}
+
+bool AMVSynthAudioProcessor::loadSample (const juce::File& file)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr || reader->lengthInSamples < 16 || reader->sampleRate < 1000.0)
+        return false;
+
+    const auto longest = (juce::int64) (amv::SampleData::maxSeconds * reader->sampleRate);
+    const int length = (int) (reader->lengthInSamples < longest ? reader->lengthInSamples : longest);
+    juce::AudioBuffer<float> audio (reader->numChannels > 1 ? 2 : 1, length);
+    if (! reader->read (&audio, 0, length, 0, true, true))
+        return false;
+
+    auto data = amv::SampleData::fromBuffer (audio, reader->sampleRate, file.getFileNameWithoutExtension());
+    if (data == nullptr)
+        return false;
+
+    setSample (std::move (data));
+    return true;
+}
+
+void AMVSynthAudioProcessor::storeSample()
+{
+    // The sample travels with the project and with saved presets as FLAC, so the file is not needed again.
+    const auto* data = activeSample.load();
+    if (data == nullptr)
+    {
+        apvts.state.removeProperty ("sampleData", nullptr);
+        apvts.state.removeProperty ("sampleName", nullptr);
+        return;
+    }
+
+    juce::MemoryBlock block;
+    {
+        const auto audio = data->toBuffer();
+        const bool isLong = (double) data->getLength() > 20.0 * data->getSampleRate();
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::MemoryOutputStream> (block, false);
+        juce::FlacAudioFormat flac;
+        if (auto writer = flac.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (data->getSampleRate())
+                                                            .withNumChannels (audio.getNumChannels()).withBitsPerSample (isLong ? 16 : 24)))
+            writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+    }
+
+    apvts.state.setProperty ("sampleData", block.toBase64Encoding(), nullptr);
+    apvts.state.setProperty ("sampleName", data->getName(), nullptr);
+}
+
+void AMVSynthAudioProcessor::restoreSample()
+{
+    juce::MemoryBlock block;
+    const auto text = apvts.state.getProperty ("sampleData").toString();
+
+    if (text.isNotEmpty() && block.fromBase64Encoding (text) && block.getSize() > 0)
+    {
+        juce::FlacAudioFormat flac;
+        const std::unique_ptr<juce::AudioFormatReader> reader (flac.createReaderFor (new juce::MemoryInputStream (block, false), true));
+        if (reader != nullptr && reader->lengthInSamples >= 16)
+        {
+            juce::AudioBuffer<float> audio (reader->numChannels > 1 ? 2 : 1, (int) reader->lengthInSamples);
+            if (reader->read (&audio, 0, audio.getNumSamples(), 0, true, true))
+                if (auto data = amv::SampleData::fromBuffer (audio, reader->sampleRate, apvts.state.getProperty ("sampleName").toString()))
+                {
+                    const auto now = juce::jmax<juce::uint32> (1, juce::Time::getMillisecondCounter());
+                    const auto* previous = activeSample.exchange (data.get(), std::memory_order_acq_rel);
+                    for (auto& stored : sampleStore)
+                        if (stored.data.get() == previous && previous != nullptr)
+                            stored.retiredAt = now;
+                    sampleStore.push_back ({ std::move (data), 0 });
+                    return;
+                }
+        }
+    }
+
+    // A state without a sample keeps the one that is loaded now.
+    if (activeSample.load() != nullptr)
+        storeSample();
+}
+
 bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)
 {
     const auto xml = apvts.copyState().createXml();
@@ -434,6 +564,7 @@ bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
 
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
     restoreUserWavetables();
+    restoreSample();
 
     for (const auto& [param, normalised] : kept)
         param->setValueNotifyingHost (normalised);

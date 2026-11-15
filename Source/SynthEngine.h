@@ -5,6 +5,7 @@
 
 #include "Filter.h"
 #include "Modulation.h"
+#include "Sampler.h"
 #include "Tuning.h"
 #include "Wavetables.h"
 
@@ -75,6 +76,7 @@ struct EngineParams
     float subShape = 0.0f;     // 0 = sine, 1 = square
     float noiseLevel = 0.0f;
     float noiseColorHz = 6000.0f;
+    SamplerParams sampler;
 
     // Modulation
     std::array<LfoParams, mod::numLfos> lfos;
@@ -197,6 +199,12 @@ public:
     int getNote() const noexcept { return note; }
     int getChannel() const noexcept { return channel; }
 
+    /** Where the sampler of this voice is reading, 0..1 through the sample. Returns how many positions. */
+    int getSamplerPositions (const SamplerParams& p, float* out, int capacity) const noexcept
+    {
+        return samplerVoice.getPositions (p, out, capacity);
+    }
+
     /** Writes this voice's own modulation sources, for the display. */
     void fillSources (float* src) const noexcept
     {
@@ -273,6 +281,9 @@ public:
         drumTime = 0.0f;
         if (! wasActive)
             drumPhase = { 0.0f, 0.0f };
+
+        // A legato slide keeps the sample running, a new note starts it again.
+        samplerVoice.start (p.sampler, (juce::uint32) random.nextInt());
 
         vibTime = 0.0f;
         clickEnv = 1.0f;
@@ -352,6 +363,13 @@ public:
             modulated.oscB.pitch = ranged (base.oscB.pitch, dest[mod::dstOscBPitch], -24.0f, 24.0f);
             modulated.oscA.warpAmount = unit (base.oscA.warpAmount + dest[mod::dstOscAWarp]);
             modulated.oscB.warpAmount = unit (base.oscB.warpAmount + dest[mod::dstOscBWarp]);
+            modulated.sampler.level = unit (base.sampler.level + dest[mod::dstSamplerLevel]);
+            modulated.sampler.pitch = ranged (base.sampler.pitch, dest[mod::dstSamplerPitch], -24.0f, 24.0f);
+            modulated.sampler.position = unit (base.sampler.position + dest[mod::dstGrainPosition]);
+            modulated.sampler.grainMs = ranged (base.sampler.grainMs, dest[mod::dstGrainSize], 5.0f, 500.0f);
+            modulated.sampler.density = ranged (base.sampler.density, dest[mod::dstGrainDensity], 1.0f, 100.0f);
+            modulated.sampler.spray = unit (base.sampler.spray + dest[mod::dstGrainSpray]);
+            modulated.sampler.scan = ranged (base.sampler.scan, dest[mod::dstGrainScan], -2.0f, 2.0f);
 
             for (int i = 0; i < 4; ++i)
                 if (std::abs (dest[mod::dstEngine1 + i]) > 0.0f)
@@ -410,8 +428,13 @@ public:
         const bool subOn = p.subLevel > 0.0f, noiseOn = p.noiseLevel > 0.0f;
         const bool extras = oscA.on || oscB.on || subOn;
 
-        // Only spread unison needs a second filter; everything else is the same on both sides.
-        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide);
+        // The sampler follows the key from its root note, or plays every key at the sample's own pitch.
+        const bool samplerOn = p.sampler.level > 0.0f && p.sampler.data != nullptr;
+        const float samplerTune = std::exp2 ((p.sampler.pitch + p.sampler.fineCents * 0.01f) / 12.0f);
+        const float samplerRootHz = midiToHz ((float) p.sampler.rootNote);
+
+        // Only spread unison and the sampler need a second filter; everything else is the same on both sides.
+        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide) || samplerOn;
         const float subRatio = p.subOctave >= 2 ? 0.25f : 0.5f;
         const float noiseCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (p.noiseColorHz, 0.45f * sr) / sr);
 
@@ -483,6 +506,13 @@ public:
                     s += (sine + (pulse (subPhase, subInc, 0.5f) * 0.7f - sine) * p.subShape) * p.subLevel * 0.8f;
                     advance (subPhase, subInc);
                 }
+            }
+
+            if (samplerOn)
+            {
+                // Without key tracking only bends, vibrato and modulation move the pitch.
+                const float ratio = p.sampler.keyTrack ? midiToHz (pitch) / samplerRootHz : std::exp2 ((pitch - currentPitch) / 12.0f);
+                samplerVoice.process (p.sampler, ratio * samplerTune, sr, oscLeft, oscRight);
             }
 
             if (noiseOn)
@@ -1420,6 +1450,7 @@ private:
     double sampleRate = 44100.0;
     juce::ADSR ampEnv, fltEnv;
     VoiceFilter filter;
+    SamplerVoice samplerVoice;
     juce::Random random;
 
     int note = -1, channel = 1;
@@ -1507,6 +1538,13 @@ public:
     /** The modulation sources as they were at the end of the last block, indexed by mod::Source. */
     const std::array<float, mod::numSources>& getShownSources() const noexcept { return shownSources; }
 
+    /** Where the sampler of the newest note is reading, 0..1 through the sample, for the display. */
+    int getShownSamplerPositions (const float*& positions) const noexcept
+    {
+        positions = shownSamplerPositions.data();
+        return shownSamplerCount;
+    }
+
     /** `transport` is only needed for tempo-synced LFOs. */
     void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const TransportInfo& transport = {})
     {
@@ -1571,6 +1609,9 @@ private:
             std::copy (sources, sources + mod::numSources, shownSources.begin());
             if (newest != nullptr)
                 newest->fillSources (shownSources.data());
+            shownSamplerCount = newest != nullptr && params.sampler.level > 0.0f
+                                    ? newest->getSamplerPositions (params.sampler, shownSamplerPositions.data(), (int) shownSamplerPositions.size())
+                                    : 0;
 
             bool anyHeld = false;
             for (auto& v : voices)
@@ -1754,6 +1795,8 @@ private:
     float bendSmooth = 0.0f, bendTarget = 0.0f, bendCoeff = 1.0f;
     float tuneOffset = 0.0f; // semitones, from the A4 reference
     std::array<float, mod::numSources> shownSources {};
+    std::array<float, 16> shownSamplerPositions {};
+    int shownSamplerCount = 0;
 
     // Per-channel expression for MPE; index 0 is channel 1, the master channel.
     std::array<float, 16> channelBend {}, channelPressure {}, channelTimbre {};

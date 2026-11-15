@@ -287,6 +287,70 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     addSection ("NOISE", false, 2, 3.0f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
     addSection ("BALKAN ENGINE", true, 2, 2.0f).knobs = makeKnobs (true, { { id::engineLevel, "LEVEL" } });
 
+    // SAMPLE page: the sampler with its classic and granular modes.
+    buildingPage = 6;
+    {
+        const char* names[numSampleTools] { "LOAD", "NORMALIZE", "CROP", "FADE EDGES", "FIND ROOT", "TO WAVE A", "TO WAVE B", "CLEAR" };
+        const char* tips[numSampleTools] { "Load an audio file (WAV, AIFF, FLAC, MP3 or OGG). The first 60 seconds are used and saved with the project.",
+                                           "Bring the loudest peak of the sample to full level.",
+                                           "Keep only the part between START and END.",
+                                           "Fade the first and last few milliseconds, so the sample starts and ends without a click.",
+                                           "Find the pitch of the sample and set ROOT to it.",
+                                           "Cut 16 single cycles between START and END into the User wavetable of oscillator A. ROOT has to match the pitch.",
+                                           "Cut 16 single cycles between START and END into the User wavetable of oscillator B. ROOT has to match the pitch.",
+                                           "Remove the sample from the project." };
+        for (int i = 0; i < numSampleTools; ++i)
+        {
+            auto& button = sampleButtons[(size_t) i];
+            button.setButtonText (names[i]);
+            button.setTooltip (tips[i]);
+            button.setColour (juce::TextButton::buttonColourId, colour::knob);
+            button.setColour (juce::TextButton::textColourOffId, colour::text);
+            button.onClick = [this, i] { runSampleTool (i); };
+            addChildComponent (button);
+        }
+
+        sampleDisplay.onFileDropped = [this] (bool ok)
+        {
+            if (ok)
+            {
+                setParameterValue (id::smpStart, 0.0f);
+                setParameterValue (id::smpEnd, 1.0f);
+                setParameterValue (id::smpLoopStart, 0.0f);
+                setParameterValue (id::smpLoopEnd, 1.0f);
+                if (processor.apvts.getRawParameterValue (id::smpLevel)->load() <= 0.0f)
+                    setParameterValue (id::smpLevel, 0.8f);
+            }
+            showStatus (ok ? "Sample loaded." : "This file could not be read as audio.");
+        };
+
+        auto& s = addSection ("SAMPLE", false, 0, 1.0f);
+        s.column.push_back (&makeChoice (id::smpMode, false)->box);
+        s.column.push_back (&makeChoice (id::smpLoop, false)->box);
+        s.column.push_back (&makeToggle (id::smpKeyTrack, "KEY TRACK", false)->button);
+        s.column.push_back (&makeToggle (id::smpReverse, "REVERSE", false)->button);
+        s.columnWidth = 126;
+        s.display = &sampleDisplay;
+        s.displayShare = 0.88f;
+        s.knobs = makeKnobs (false, { { id::smpLevel, "LEVEL" } });
+        addChildComponent (sampleDisplay);
+    }
+    addSection ("PLAYBACK", false, 1, 1.0f).knobs = makeKnobs (false, { { id::smpStart, "START" }, { id::smpEnd, "END" }, { id::smpLoopStart, "LOOP START" },
+                                                                        { id::smpLoopEnd, "LOOP END" }, { id::smpCrossfade, "XFADE" }, { id::smpRoot, "ROOT" },
+                                                                        { id::smpPitch, "PITCH" }, { id::smpFine, "FINE" }, { id::smpPan, "PAN" } });
+    addSection ("GRAINS", false, 2, 1.0f).knobs = makeKnobs (false, { { id::smpPosition, "POSITION" }, { id::smpGrainSize, "SIZE" }, { id::smpDensity, "DENSITY" },
+                                                                      { id::smpSpray, "SPRAY" }, { id::smpPitchSpray, "PITCH SPRAY" }, { id::smpScan, "SCAN" },
+                                                                      { id::smpShape, "SHAPE" }, { id::smpSpread, "SPREAD" }, { id::smpRevChance, "REVERSE" } });
+    {
+        auto& s = addSection ("TOOLS", false, 3, 5.0f);
+        for (auto& button : sampleButtons)
+            s.column.push_back (&button);
+        s.columnsInColumn = 4;
+        addSection ("INFO", false, 3, 4.0f).display = &sampleInfo;
+        addChildComponent (sampleInfo);
+        updateSampleInfo();
+    }
+
     // MOD page: two LFOs, four macros and the modulation matrix.
     buildingPage = 2;
     for (int i = 0; i < mod::numLfos; ++i)
@@ -370,7 +434,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
     addChildComponent (waveEditor);
 
-    const char* tabNames[] { "SYNTH", "OSC", "WAVE", "MOD", "FX", "SETUP" };
+    const char* tabNames[] { "SYNTH", "OSC", "WAVE", "SAMPLE", "MOD", "FX", "SETUP" };
     for (size_t i = 0; i < tabs.size(); ++i)
     {
         auto& tab = tabs[i];
@@ -565,10 +629,12 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
     for (auto& c : choices)
         c->box.setVisible (false);
     tuneBox.setVisible (false);
-    sourceBar.setVisible (currentPage < 4);
-    statusLabel.setVisible (currentPage < 4);
+    sourceBar.setVisible (hasSourceBar());
+    statusLabel.setVisible (hasSourceBar());
     waveEditor.setVisible (currentPage == 5);
     for (auto& button : importButtons)
+        button.setVisible (false);
+    for (auto& button : sampleButtons)
         button.setVisible (false);
     for (auto& s : sections)
         if (s.display != nullptr)
@@ -630,6 +696,8 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     ampEnvDisplay.refresh();
     filterEnvDisplay.refresh();
     updateModulationDisplay();
+    sampleDisplay.refresh();
+    updateSampleInfo();
 
     if (meterChanged && levelMeter.isVisible())
         levelMeter.repaint();
@@ -1242,6 +1310,148 @@ void AMVSynthAudioProcessorEditor::showModMenu (ModKnob& knob)
                         });
 }
 
+void AMVSynthAudioProcessorEditor::setParameterValue (const char* paramId, float value)
+{
+    if (auto* param = processor.apvts.getParameter (paramId))
+        param->setValueNotifyingHost (param->convertTo0to1 (value));
+}
+
+void AMVSynthAudioProcessorEditor::updateSampleInfo()
+{
+    const auto* data = processor.getSample();
+    if (data == infoFor && infoShown)
+        return;
+
+    infoFor = data;
+    infoShown = true;
+
+    if (data == nullptr)
+        sampleInfo.lines = { "No sample loaded. Press LOAD or drop an audio file on the wave.",
+                             "Classic plays the sample across the keyboard, with a loop if you want one.",
+                             "Granular builds the sound from short grains around POSITION.",
+                             "SCAN moves the position on its own: 1 plays at the sample's speed at any pitch." };
+    else
+        sampleInfo.lines = { data->getName(),
+                             juce::String ((double) data->getLength() / data->getSampleRate(), 2) + " s,  " + juce::String (juce::roundToInt (data->getSampleRate()))
+                                 + " Hz,  " + (data->isStereo() ? "stereo" : "mono"),
+                             "Drag START, END, LOOP and GRAIN in the wave. Turn LEVEL up to hear it.",
+                             "The sample is saved inside the project and in presets you save." };
+    sampleInfo.repaint();
+}
+
+void AMVSynthAudioProcessorEditor::runSampleTool (int tool)
+{
+    using namespace amv;
+    const auto resetMarkers = [this]
+    {
+        setParameterValue (id::smpStart, 0.0f);
+        setParameterValue (id::smpEnd, 1.0f);
+        setParameterValue (id::smpLoopStart, 0.0f);
+        setParameterValue (id::smpLoopEnd, 1.0f);
+    };
+
+    if (tool == toolLoad)
+    {
+        const auto folder = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        fileChooser = std::make_unique<juce::FileChooser> ("Load sample", folder, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this, resetMarkers] (const juce::FileChooser& chooser)
+                                  {
+                                      const auto file = chooser.getResult();
+                                      if (file == juce::File())
+                                          return;
+
+                                      if (! processor.loadSample (file))
+                                      {
+                                          showStatus ("This file could not be read as audio.");
+                                          return;
+                                      }
+
+                                      resetMarkers();
+                                      if (processor.apvts.getRawParameterValue (id::smpLevel)->load() <= 0.0f)
+                                          setParameterValue (id::smpLevel, 0.8f);
+                                      showStatus ("Sample loaded.");
+                                  });
+        return;
+    }
+
+    const auto* data = processor.getSample();
+    if (data == nullptr)
+    {
+        showStatus ("Load a sample first.");
+        return;
+    }
+
+    const auto value = [this] (const char* paramId) { return processor.apvts.getRawParameterValue (paramId)->load(); };
+    const float start = value (id::smpStart), end = juce::jmax (start, value (id::smpEnd));
+    auto audio = data->toBuffer();
+    const int length = audio.getNumSamples();
+
+    switch (tool)
+    {
+        case toolNormalise:
+        {
+            const float peak = audio.getMagnitude (0, length);
+            if (peak < 1.0e-6f)
+                return;
+            audio.applyGain (1.0f / peak);
+            processor.setSample (SampleData::fromBuffer (audio, data->getSampleRate(), data->getName()));
+            showStatus ("Normalized, gain " + juce::String (juce::Decibels::gainToDecibels (1.0f / peak), 1) + " dB.");
+            break;
+        }
+        case toolCrop:
+        {
+            const int from = juce::jlimit (0, length - 16, (int) (start * (float) length));
+            const int count = juce::jlimit (16, length - from, (int) ((end - start) * (float) length));
+            juce::AudioBuffer<float> part (audio.getNumChannels(), count);
+            for (int ch = 0; ch < part.getNumChannels(); ++ch)
+                part.copyFrom (ch, 0, audio, ch, from, count);
+            processor.setSample (SampleData::fromBuffer (part, data->getSampleRate(), data->getName()));
+            resetMarkers();
+            showStatus ("Cropped to " + juce::String ((double) count / data->getSampleRate(), 2) + " s.");
+            break;
+        }
+        case toolFade:
+        {
+            const int fade = juce::jmin (length / 2, (int) (0.005 * data->getSampleRate()));
+            audio.applyGainRamp (0, fade, 0.0f, 1.0f);
+            audio.applyGainRamp (length - fade, fade, 1.0f, 0.0f);
+            processor.setSample (SampleData::fromBuffer (audio, data->getSampleRate(), data->getName()));
+            showStatus ("Edges faded.");
+            break;
+        }
+        case toolFindRoot:
+        {
+            const int note = detectRootNote (*data);
+            if (note < 0)
+            {
+                showStatus ("No clear pitch found; set ROOT by ear.");
+                return;
+            }
+            setParameterValue (id::smpRoot, (float) note);
+            showStatus ("Root set to " + juce::MidiMessage::getMidiNoteName (note, true, true, 3) + ".");
+            break;
+        }
+        case toolToWaveA:
+        case toolToWaveB:
+        {
+            const int osc = tool == toolToWaveA ? 0 : 1;
+            processor.setUserWavetableFrames (osc, sampleToWavetable (*data, start, end, juce::roundToInt (value (id::smpRoot)),
+                                                                      UserWavetable::numFrames, UserWavetable::tableSize),
+                                              data->getName(), true);
+            if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter (osc == 0 ? id::oscATable : id::oscBTable)))
+                param->setValueNotifyingHost (param->convertTo0to1 ((float) (param->choices.size() - 1)));
+            showStatus (juce::String ("Wavetable of oscillator ") + (osc == 0 ? "A" : "B") + " made from the sample.");
+            break;
+        }
+        case toolClear:
+            processor.setSample (nullptr);
+            showStatus ("Sample removed.");
+            break;
+        default: break;
+    }
+}
+
 void AMVSynthAudioProcessorEditor::showStatus (const juce::String& text)
 {
     statusLabel.setText (text, juce::dontSendNotification);
@@ -1620,8 +1830,9 @@ void AMVSynthAudioProcessorEditor::resized()
     headerArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
-        tabs[i].setBounds (headerArea.removeFromRight (56));
-        headerArea.removeFromRight (4);
+        static constexpr int widths[] { 56, 46, 52, 66, 46, 40, 56 };
+        tabs[i].setBounds (headerArea.removeFromRight (widths[i]));
+        headerArea.removeFromRight (3);
     }
 
     // The preset bar fills the space between the logo and the tabs.
@@ -1645,7 +1856,7 @@ void AMVSynthAudioProcessorEditor::resized()
     // The wavetable editor lays out its own page.
     waveEditor.setBounds (area);
 
-    if (currentPage < 4)
+    if (hasSourceBar())
     {
         auto bar = area.removeFromTop (sourceBarHeight);
         area.removeFromTop (gap - 2);

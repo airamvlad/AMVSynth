@@ -52,6 +52,13 @@ enum Dest
     dstOscBPitch,
     dstOscAWarp,
     dstOscBWarp,
+    dstSamplerLevel,
+    dstSamplerPitch,
+    dstGrainPosition,
+    dstGrainSize,
+    dstGrainDensity,
+    dstGrainSpray,
+    dstGrainScan,
     numDests
 };
 
@@ -130,7 +137,8 @@ inline const std::array<const char*, mod::numDests>& getModDests()
                                                                 "Filter Env Amount", "Sub Level", "Vibrato Depth", "Vibrato Rate",
                                                                 "Engine Knob 1", "Engine Knob 2", "Engine Knob 3", "Engine Knob 4",
                                                                 "Osc A Detune", "Osc B Detune", "Osc A Pitch", "Osc B Pitch",
-                                                                "Osc A Warp", "Osc B Warp" };
+                                                                "Osc A Warp", "Osc B Warp", "Sampler Level", "Sampler Pitch", "Grain Position", "Grain Size",
+                                                                "Grain Density", "Grain Spray", "Grain Scan" };
     return names;
 }
 

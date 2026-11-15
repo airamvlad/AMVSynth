@@ -136,6 +136,76 @@ int main()
         file.deleteFile();
     }
 
+    // A sample is loaded from a file, saved with the project and removed again.
+    {
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("amvsynth-sample-test.wav");
+        file.deleteFile();
+        juce::AudioBuffer<float> audio (2, 22050);
+        for (int i = 0; i < audio.getNumSamples(); ++i)
+        {
+            audio.setSample (0, i, 0.7f * std::sin (0.03f * (float) i));
+            audio.setSample (1, i, 0.4f * std::sin (0.011f * (float) i));
+        }
+        {
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+            if (stream != nullptr)
+                if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (44100.0).withNumChannels (2).withBitsPerSample (24)))
+                    writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+        }
+
+        std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());
+        auto* first = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        bool ok = first != nullptr && first->getSample() == nullptr && ! first->loadSample (file.getSiblingFile ("amvsynth-no-sample.wav"))
+                      && first->loadSample (file) && first->getSample() != nullptr && first->getSample()->getLength() == 22050
+                      && first->getSample()->isStereo() && first->getSample()->getName() == "amvsynth-sample-test";
+
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
+        other->setStateInformation (state.getData(), (int) state.getSize());
+        auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
+        ok = ok && second != nullptr && second->getSample() != nullptr && second->getSample()->getLength() == 22050
+                 && second->getSample()->getSampleRate() == 44100.0 && second->getSample()->getName() == "amvsynth-sample-test";
+        for (int i = 0; ok && i < 22050; i += 7)
+            ok = std::abs (second->getSample()->getChannel (0)[i] - audio.getSample (0, i)) < 1.0e-4f
+                     && std::abs (second->getSample()->getChannel (1)[i] - audio.getSample (1, i)) < 1.0e-4f;
+
+        // Playing it through the whole plugin gives sound.
+        if (ok)
+        {
+            auto set = [second] (const char* paramId, float v) { auto* p = second->apvts.getParameter (paramId); p->setValueNotifyingHost (p->convertTo0to1 (v)); };
+            set (amv::id::smpLevel, 1.0f);
+            set (amv::id::engineLevel, 0.0f);
+            set (amv::id::smpMode, 1.0f);
+            other->prepareToPlay (48000.0, 512);
+            float peak = 0.0f;
+            for (int block = 0; block < 40; ++block)
+            {
+                juce::AudioBuffer<float> buffer (2, 512);
+                juce::MidiBuffer midi;
+                if (block == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
+                other->processBlock (buffer, midi);
+                peak = juce::jmax (peak, buffer.getMagnitude (0, 512));
+            }
+            ok = peak > 0.05f && peak < 2.0f;
+        }
+
+        const int kb = (int) (state.getSize() / 1024);
+        if (ok)
+        {
+            first->setSample (nullptr);
+            juce::MemoryBlock empty;
+            plugin->getStateInformation (empty);
+            ok = first->getSample() == nullptr && empty.getSize() < state.getSize() / 2;
+        }
+
+        std::printf ("%s  a sample is loaded, saved with the project (state is %d KB) and removed again\n", ok ? "ok  " : "FAIL", kb);
+        failures += ok ? 0 : 1;
+        file.deleteFile();
+    }
+
     std::printf ("%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
