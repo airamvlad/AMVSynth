@@ -155,6 +155,10 @@ inline constexpr auto oscAPitch = "oscAPitch";
 inline constexpr auto oscAFine = "oscAFine";
 inline constexpr auto oscALevel = "oscALevel";
 inline constexpr auto oscAWidth = "oscAWidth";
+inline constexpr auto env3A = "env3Attack";
+inline constexpr auto env3D = "env3Decay";
+inline constexpr auto env3S = "env3Sustain";
+inline constexpr auto env3R = "env3Release";
 inline constexpr auto smpLevel = "smpLevel";
 inline constexpr auto smpMode = "smpMode";
 inline constexpr auto smpPitch = "smpPitch";
@@ -240,6 +244,11 @@ inline int modDestFor (const juce::String& paramId)
         { id::smpLevel, mod::dstSamplerLevel }, { id::smpPitch, mod::dstSamplerPitch }, { id::smpPosition, mod::dstGrainPosition },
         { id::smpGrainSize, mod::dstGrainSize }, { id::smpDensity, mod::dstGrainDensity }, { id::smpSpray, mod::dstGrainSpray },
         { id::smpScan, mod::dstGrainScan },
+        { id::ampA, mod::dstAmpAttack }, { id::ampD, mod::dstAmpDecay }, { id::ampR, mod::dstAmpRelease },
+        { id::fltA, mod::dstFltAttack }, { id::fltD, mod::dstFltDecay }, { id::fltR, mod::dstFltRelease },
+        { id::distDrive, mod::dstDistDrive }, { id::distMix, mod::dstDistMix }, { id::gateDepth, mod::dstGateDepth },
+        { id::delayFeedback, mod::dstDelayFeedback }, { id::delayTone, mod::dstDelayTone }, { id::delayMix, mod::dstDelayMix },
+        { id::reverbSize, mod::dstReverbSize }, { id::reverbMix, mod::dstReverbMix },
         { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
         { id::vibDepth, mod::dstVibrato }, { id::vibRate, mod::dstVibRate }, { id::level, mod::dstVolume },
     };
@@ -484,6 +493,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         add (id::lfo (i, "Rate").toRawUTF8(), (name + "Rate").toRawUTF8(), skewed (0.02f, 40.0f, 3.0f), i == 0 ? 5.0f : 0.5f, "Hz");
         addBool (id::lfo (i, "Sync").toRawUTF8(), (name + "Sync").toRawUTF8(), false);
         addChoice (id::lfo (i, "Division").toRawUTF8(), (name + "Division").toRawUTF8(), lfoDivisions, i == 0 ? 7 : 2);
+        addChoice (id::lfo (i, "Mode").toRawUTF8(), (name + "Mode").toRawUTF8(), { "Free", "Retrigger", "One Shot" }, 0);
     }
 
     for (int i = 0; i < mod::numMacros; ++i)
@@ -609,6 +619,11 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::fltD, "Filter Decay", skewed (1.0f, 6000.0f, 400.0f), 320.0f, "ms");
     add (id::fltS, "Filter Sustain", Range (0.0f, 1.0f), 0.4f);
     add (id::fltR, "Filter Release", skewed (1.0f, 8000.0f, 500.0f), 200.0f, "ms");
+
+    add (id::env3A, "Env 3 Attack", skewed (0.5f, 4000.0f, 200.0f), 10.0f, "ms");
+    add (id::env3D, "Env 3 Decay", skewed (1.0f, 8000.0f, 500.0f), 300.0f, "ms");
+    add (id::env3S, "Env 3 Sustain", Range (0.0f, 1.0f), 0.0f);
+    add (id::env3R, "Env 3 Release", skewed (1.0f, 8000.0f, 500.0f), 300.0f, "ms");
 
     add (id::level, "Level", Range (-48.0f, 6.0f), -9.0f, "dB");
 

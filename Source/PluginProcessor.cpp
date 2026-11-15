@@ -10,11 +10,14 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
     using namespace amv;
     const auto ref = [this] (const juce::String& paramId) { return apvts.getRawParameterValue (paramId); };
     for (int i = 0; i < mod::numLfos; ++i)
-        lfoRefs[(size_t) i] = { ref (id::lfo (i, "Shape")), ref (id::lfo (i, "Rate")), ref (id::lfo (i, "Sync")), ref (id::lfo (i, "Division")) };
+        lfoRefs[(size_t) i] = { ref (id::lfo (i, "Shape")), ref (id::lfo (i, "Rate")), ref (id::lfo (i, "Sync")), ref (id::lfo (i, "Division")), ref (id::lfo (i, "Mode")) };
     for (int i = 0; i < mod::numMacros; ++i)
         macroRefs[(size_t) i] = ref (id::macro (i));
     for (int i = 0; i < mod::numSlots; ++i)
         slotRefs[(size_t) i] = { ref (id::slot (i, "Source")), ref (id::slot (i, "Dest")), ref (id::slot (i, "Amount")), ref (id::slot (i, "Polarity")) };
+
+    for (int i = 0; i < mod::numLfos; ++i)
+        setLfoShape (i, {}, false);
 
     const auto& knobIds = getEngineKnobIds();
     for (size_t m = 0; m < knobIds.size(); ++m)
@@ -108,7 +111,8 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
 
     for (size_t i = 0; i < lfoRefs.size(); ++i)
         p.lfos[i] = { juce::roundToInt (lfoRefs[i].shape->load()), lfoRefs[i].rate->load(), lfoRefs[i].sync->load() > 0.5f,
-                      juce::roundToInt (lfoRefs[i].division->load()) };
+                      juce::roundToInt (lfoRefs[i].division->load()), juce::roundToInt (lfoRefs[i].mode->load()),
+                      activeLfoShape[i].load (std::memory_order_acquire) };
     for (size_t i = 0; i < macroRefs.size(); ++i)
         p.modMacros[i] = macroRefs[i]->load();
     for (size_t i = 0; i < slotRefs.size(); ++i)
@@ -159,6 +163,7 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
     p.filterEnv = value (id::filterEnv);
     p.amp = { value (id::ampA) * 0.001f, value (id::ampD) * 0.001f, value (id::ampS), value (id::ampR) * 0.001f };
     p.flt = { value (id::fltA) * 0.001f, value (id::fltD) * 0.001f, value (id::fltS), value (id::fltR) * 0.001f };
+    p.env3 = { value (id::env3A) * 0.001f, value (id::env3D) * 0.001f, value (id::env3S), value (id::env3R) * 0.001f };
     return p;
 }
 
@@ -210,6 +215,10 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const auto& shown = engine.getShownSources();
     for (size_t i = 0; i < shown.size(); ++i)
         modSourceValues[i].store (shown[i], std::memory_order_relaxed);
+
+    const auto& phases = engine.getShownLfoPhases();
+    for (size_t i = 0; i < phases.size(); ++i)
+        lfoPhases[i].store (phases[i], std::memory_order_relaxed);
 
     const float* positions = nullptr;
     const int positionCount = engine.getShownSamplerPositions (positions);
@@ -276,6 +285,20 @@ amv::FxParams AMVSynthAudioProcessor::readFxParams() const
     p.duckDepth = value (id::duckDepth) * 0.01f;
     p.duckRelease = value (id::duckRelease) * 0.01f;
     p.order = juce::roundToInt (value (id::fxOrder));
+
+    // Modulation of the effects, worked out by the engine for this block.
+    const auto moved = [this] (float v, int dest, float lowest, float highest)
+    {
+        return juce::jlimit (lowest, highest, v + engine.getGlobalModulation (dest) * (highest - lowest));
+    };
+    p.distDriveDb = moved (p.distDriveDb, mod::dstDistDrive, 0.0f, 36.0f);
+    p.distMix = moved (p.distMix, mod::dstDistMix, 0.0f, 1.0f);
+    p.gateDepth = moved (p.gateDepth, mod::dstGateDepth, 0.0f, 1.0f);
+    p.delayFeedback = moved (p.delayFeedback, mod::dstDelayFeedback, 0.0f, 0.95f);
+    p.delayToneHz = juce::jlimit (300.0f, 16000.0f, p.delayToneHz * std::exp2 (engine.getGlobalModulation (mod::dstDelayTone) * mod::timeOctaves));
+    p.delayMix = moved (p.delayMix, mod::dstDelayMix, 0.0f, 1.0f);
+    p.reverbSize = moved (p.reverbSize, mod::dstReverbSize, 0.0f, 1.0f);
+    p.reverbMix = moved (p.reverbMix, mod::dstReverbMix, 0.0f, 1.0f);
     return p;
 }
 
@@ -318,6 +341,7 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
             apvts.replaceState (state);
             restoreUserWavetables();
             restoreSample();
+            restoreLfoShapes();
         }
 }
 
@@ -540,6 +564,34 @@ void AMVSynthAudioProcessor::restoreSample()
         storeSample();
 }
 
+void AMVSynthAudioProcessor::setLfoShape (int lfo, std::vector<amv::LfoPoint> points, bool save)
+{
+    auto shape = std::make_unique<amv::LfoShape> (std::move (points));
+    const auto text = shape->toString();
+    const auto now = juce::jmax<juce::uint32> (1, juce::Time::getMillisecondCounter());
+    const auto* previous = activeLfoShape[(size_t) lfo].exchange (shape.get(), std::memory_order_acq_rel);
+
+    for (auto& stored : lfoShapeStore)
+        if (stored.shape.get() == previous && previous != nullptr)
+            stored.retiredAt = now;
+    lfoShapeStore.push_back ({ std::move (shape), 0 });
+
+    // A replaced shape is thrown away half a second later; the audio thread only holds one for a block.
+    lfoShapeStore.erase (std::remove_if (lfoShapeStore.begin(), lfoShapeStore.end(),
+                                         [now] (const StoredShape& stored) { return stored.retiredAt != 0 && now - stored.retiredAt > 500; }),
+                         lfoShapeStore.end());
+
+    if (save)
+        apvts.state.setProperty ("lfoShape" + juce::String (lfo + 1), text, nullptr);
+}
+
+void AMVSynthAudioProcessor::restoreLfoShapes()
+{
+    // A state without a shape gets the default one, so a preset always sounds the same.
+    for (int lfo = 0; lfo < amv::mod::numLfos; ++lfo)
+        setLfoShape (lfo, amv::LfoShape::pointsFromString (apvts.state.getProperty ("lfoShape" + juce::String (lfo + 1)).toString()), false);
+}
+
 bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)
 {
     const auto xml = apvts.copyState().createXml();
@@ -565,6 +617,7 @@ bool AMVSynthAudioProcessor::loadPresetFile (const juce::File& file)
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
     restoreUserWavetables();
     restoreSample();
+    restoreLfoShapes();
 
     for (const auto& [param, normalised] : kept)
         param->setValueNotifyingHost (normalised);

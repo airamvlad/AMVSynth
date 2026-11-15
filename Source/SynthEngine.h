@@ -149,6 +149,7 @@ struct EngineParams
     float filterEnv = 0.35f;   // -1..1, scaled to +/- 5 octaves
     juce::ADSR::Parameters amp { 0.004f, 0.25f, 0.8f, 0.16f };
     juce::ADSR::Parameters flt { 0.002f, 0.32f, 0.4f, 0.2f };
+    juce::ADSR::Parameters env3 { 0.01f, 0.3f, 0.0f, 0.3f }; // a free envelope, only a modulation source
 };
 
 /** What the engine decides for a note before handing it to a voice. */
@@ -173,6 +174,7 @@ public:
         sampleRate = newSampleRate;
         ampEnv.setSampleRate (newSampleRate);
         fltEnv.setSampleRate (newSampleRate);
+        env3.setSampleRate (newSampleRate);
         filter.prepare (newSampleRate);
 
         // Plucked strings: long enough for the lowest note at this sample rate.
@@ -189,6 +191,7 @@ public:
     {
         ampEnv.reset();
         fltEnv.reset();
+        env3.reset();
         filter.reset();
         note = -1;
         held = false;
@@ -209,6 +212,7 @@ public:
     void fillSources (float* src) const noexcept
     {
         src[mod::srcFilterEnv] = lastFilterEnv;
+        src[mod::srcEnv3] = lastEnv3;
         src[mod::srcVelocity] = velocity;
         src[mod::srcPressure] = notePressure;
         src[mod::srcTimbre] = noteTimbre;
@@ -263,6 +267,7 @@ public:
             subPhase = 0.0f;
             noiseLp = 0.0f;
             lastFilterEnv = 0.0f;
+            lastEnv3 = 0.0f;
             modSnap = true;
             reedLp = 0.0f;
             clickLp = 0.0f;
@@ -289,8 +294,10 @@ public:
         clickEnv = 1.0f;
         ampEnv.setParameters (p.amp);
         fltEnv.setParameters (p.flt);
+        env3.setParameters (p.env3);
         ampEnv.noteOn();
         fltEnv.noteOn();
+        env3.noteOn();
     }
 
     /** Legato: move to a new pitch without retriggering the envelopes. */
@@ -305,6 +312,7 @@ public:
         releaseTime = 0.0f;
         ampEnv.noteOff();
         fltEnv.noteOff();
+        env3.noteOff();
     }
 
     /** Adds this voice to `out` and `outRight`. `globalBend` is the pitch wheel and tuning offset in semitones.
@@ -328,6 +336,7 @@ public:
             std::copy (sources, sources + mod::numSources, src);
             src[mod::srcNone] = 0.0f;
             src[mod::srcFilterEnv] = lastFilterEnv;
+            src[mod::srcEnv3] = lastEnv3;
             src[mod::srcVelocity] = velocity;
             src[mod::srcPressure] = notePressure;
             src[mod::srcTimbre] = noteTimbre;
@@ -371,6 +380,18 @@ public:
             modulated.sampler.spray = unit (base.sampler.spray + dest[mod::dstGrainSpray]);
             modulated.sampler.scan = ranged (base.sampler.scan, dest[mod::dstGrainScan], -2.0f, 2.0f);
 
+            // Envelope times move by octaves, so a modulation works the same on a short and a long time.
+            const auto timed = [] (float seconds, float amount)
+            {
+                return juce::jlimit (0.0005f, 20.0f, seconds * std::exp2 (amount * mod::timeOctaves));
+            };
+            modulated.amp.attack = timed (base.amp.attack, dest[mod::dstAmpAttack]);
+            modulated.amp.decay = timed (base.amp.decay, dest[mod::dstAmpDecay]);
+            modulated.amp.release = timed (base.amp.release, dest[mod::dstAmpRelease]);
+            modulated.flt.attack = timed (base.flt.attack, dest[mod::dstFltAttack]);
+            modulated.flt.decay = timed (base.flt.decay, dest[mod::dstFltDecay]);
+            modulated.flt.release = timed (base.flt.release, dest[mod::dstFltRelease]);
+
             for (int i = 0; i < 4; ++i)
                 if (std::abs (dest[mod::dstEngine1 + i]) > 0.0f)
                 {
@@ -399,6 +420,7 @@ public:
 
         ampEnv.setParameters (p.amp);
         fltEnv.setParameters (p.flt);
+        env3.setParameters (p.env3);
 
         const auto sr = (float) sampleRate;
         const float dt = 1.0f / sr;
@@ -408,8 +430,12 @@ public:
         // The filter is updated once per render call; the engine calls us in short chunks.
         const float envNow = fltEnv.getNextSample();
         lastFilterEnv = envNow;
+        lastEnv3 = env3.getNextSample();
         for (int i = 1; i < numSamples; ++i)
+        {
             fltEnv.getNextSample();
+            env3.getNextSample();
+        }
 
         const float keyTrack = (currentPitch - 60.0f) / 12.0f * 0.35f;
         const float cutoff = juce::jlimit (20.0f, 0.45f * sr,
@@ -1448,7 +1474,7 @@ private:
     }
 
     double sampleRate = 44100.0;
-    juce::ADSR ampEnv, fltEnv;
+    juce::ADSR ampEnv, fltEnv, env3;
     VoiceFilter filter;
     SamplerVoice samplerVoice;
     juce::Random random;
@@ -1480,7 +1506,7 @@ private:
     OscPhases oscPhasesA {}, oscPhasesB {};
     float subPhase = 0.0f, noiseLp = 0.0f;
 
-    float lastFilterEnv = 0.0f, modPitch = 0.0f, modGain = 1.0f;
+    float lastFilterEnv = 0.0f, lastEnv3 = 0.0f, modPitch = 0.0f, modGain = 1.0f;
     bool modSnap = true;
 };
 
@@ -1537,6 +1563,12 @@ public:
 
     /** The modulation sources as they were at the end of the last block, indexed by mod::Source. */
     const std::array<float, mod::numSources>& getShownSources() const noexcept { return shownSources; }
+
+    /** The modulation sum of a destination that belongs to the effects (see mod::isGlobalDest). */
+    float getGlobalModulation (int dest) const noexcept { return globalDests[(size_t) dest]; }
+
+    /** Where each LFO is in its cycle, 0..1, for the display. */
+    const std::array<float, mod::numLfos>& getShownLfoPhases() const noexcept { return shownLfoPhases; }
 
     /** Where the sampler of the newest note is reading, 0..1 through the sample, for the display. */
     int getShownSamplerPositions (const float*& positions) const noexcept
@@ -1596,7 +1628,7 @@ private:
             float sources[mod::numSources] {};
             const double ppq = blockTransport.ppq + (double) start / (double) engineSampleRate * blockTransport.bpm / 60.0;
             for (size_t i = 0; i < lfos.size(); ++i)
-                sources[mod::srcLfo1 + (int) i] = lfos[i].next (n, (double) engineSampleRate, params.lfos[i], blockTransport, ppq);
+                sources[mod::lfoSource ((int) i)] = lfos[i].next (n, (double) engineSampleRate, params.lfos[i], blockTransport, ppq);
             sources[mod::srcModWheel] = wheelSmooth;
             for (size_t i = 0; i < params.modMacros.size(); ++i)
                 sources[mod::srcMacro1 + (int) i] = params.modMacros[i];
@@ -1609,6 +1641,16 @@ private:
             std::copy (sources, sources + mod::numSources, shownSources.begin());
             if (newest != nullptr)
                 newest->fillSources (shownSources.data());
+
+            // The effects are modulated from what the display shows: the newest note stands in for all.
+            globalDests.fill (0.0f);
+            if (modActive)
+                for (const auto& slot : params.slots)
+                    if (slot.source > mod::srcNone && slot.source < mod::numSources && mod::isGlobalDest (slot.dest))
+                        globalDests[(size_t) slot.dest] += mod::shaped (shownSources[(size_t) slot.source], slot.source, slot.polarity) * slot.amount;
+            for (size_t i = 0; i < lfos.size(); ++i)
+                shownLfoPhases[i] = lfos[i].getPhase();
+
             shownSamplerCount = newest != nullptr && params.sampler.level > 0.0f
                                     ? newest->getSamplerPositions (params.sampler, shownSamplerPositions.data(), (int) shownSamplerPositions.size())
                                     : 0;
@@ -1740,9 +1782,14 @@ private:
 
             // A drum is struck again on every note; the other models slide.
             if (legato && ! isDrum (params.model))
+            {
                 v.slideTo (e);
+            }
             else
+            {
+                retriggerLfos();
                 v.start (e, counter, params, true);
+            }
 
             return;
         }
@@ -1763,7 +1810,14 @@ private:
                     target = &v;
         }
 
+        retriggerLfos();
         target->start (e, counter, params, false);
+    }
+
+    void retriggerLfos() noexcept
+    {
+        for (size_t i = 0; i < lfos.size(); ++i)
+            lfos[i].noteStarted (params.lfos[i]);
     }
 
     void noteOff (int note)
@@ -1795,6 +1849,8 @@ private:
     float bendSmooth = 0.0f, bendTarget = 0.0f, bendCoeff = 1.0f;
     float tuneOffset = 0.0f; // semitones, from the A4 reference
     std::array<float, mod::numSources> shownSources {};
+    std::array<float, mod::numDests> globalDests {};
+    std::array<float, mod::numLfos> shownLfoPhases {};
     std::array<float, 16> shownSamplerPositions {};
     int shownSamplerCount = 0;
 

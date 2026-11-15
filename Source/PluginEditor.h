@@ -25,7 +25,8 @@ inline const juce::Colour red { 0xfff0616d };
 inline juce::Colour forSource (int source)
 {
     static const juce::uint32 colours[amv::mod::numSources] { 0xff9aa4b2, 0xfff5b84a, 0xffb48cf2, 0xff4aa8ff, 0xff7ddc6f, 0xffff8a5c,
-                                                              0xfff06292, 0xffffd54f, 0xff4dd0e1, 0xffaed581, 0xffe57373, 0xff9fa8da };
+                                                              0xfff06292, 0xffffd54f, 0xff4dd0e1, 0xffaed581, 0xffe57373, 0xff9fa8da,
+                                                              0xffff7043, 0xff26c6da, 0xff64b5f6 };
     return juce::Colour (colours[juce::jlimit (0, (int) amv::mod::numSources - 1, source)]);
 }
 } // namespace colour
@@ -113,12 +114,43 @@ private:
         int hover = 0, pressed = 0;
     };
 
-    /** The shape of an LFO with a marker at its current value. */
+    /** One cycle of the selected LFO with a marker where it is now. A Custom shape is edited
+        here: points are dragged, a double click adds or removes one, the small handle between
+        two points bends the line, and a right click offers shapes to start from. */
     struct LfoDisplay final : public juce::Component
     {
         void paint (juce::Graphics&) override;
-        int shape = 0, source = amv::mod::srcLfo1;
-        float value = 0.0f;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+
+        /** Called from the editor's timer. */
+        void refresh();
+
+        /** Makes `newPoints` the Custom shape of the LFO and switches the LFO to it. */
+        void setPoints (std::vector<amv::LfoPoint> newPoints, bool finished);
+
+        AMVSynthAudioProcessorEditor* owner = nullptr;
+        int lfo = 0;
+
+    private:
+        juce::Rectangle<float> graph() const;
+        juce::Point<float> toScreen (float x, float y) const;
+        juce::Point<float> handleFor (size_t segment) const;
+        int pointAt (juce::Point<float>) const;
+        int handleAt (juce::Point<float>) const;
+        float valueAt (float phase) const;
+        void showMenu();
+
+        std::vector<amv::LfoPoint> points;
+        const void* pointsFrom = nullptr;
+        int shape = -1, mode = 0, shownLfo = -1;
+        float phase = 0.0f;
+        int hoverPoint = -1, hoverHandle = -1, dragPoint = -1, dragHandle = -1;
+        float curveStart = 0.0f;
     };
 
     /** A panel of text. */
@@ -258,7 +290,7 @@ private:
     PatternDisplay patternDisplay;
     WaveDisplay waveA, waveB;
     LevelMeter levelMeter;
-    EnvelopeDisplay ampEnvDisplay, filterEnvDisplay;
+    EnvelopeDisplay ampEnvDisplay, filterEnvDisplay, env3Display;
     juce::TooltipWindow tooltipWindow { this };
     std::array<juce::TextButton, 2> importButtons;
     WavetableEditor waveEditor { processor };
@@ -291,7 +323,13 @@ private:
     };
     std::array<SlotParams, amv::mod::numSlots> slotParams {};
     ModSourceBar sourceBar;
-    std::array<LfoDisplay, amv::mod::numLfos> lfoDisplays;
+    LfoDisplay lfoDisplay;
+    std::array<juce::TextButton, amv::mod::numLfos> lfoSelect;
+    std::array<std::vector<juce::Component*>, amv::mod::numLfos> lfoColumns;
+    std::array<std::vector<Knob*>, amv::mod::numLfos> lfoKnobs;
+    size_t lfoSection = 0;
+    void showLfo (int index);
+    TextDisplay lfoHelp;
     TextDisplay helpDisplay;
     juce::Label statusLabel;
     int statusTicks = 0;
