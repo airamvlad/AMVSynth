@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "WavetableEditor.h"
 
 namespace amv
 {
@@ -57,10 +58,11 @@ private:
     {
         int slot = 0, source = 0;
         float amount = 0.0f;
+        int polarity = 0;
 
         bool operator== (const Assignment& other) const noexcept
         {
-            return slot == other.slot && source == other.source && std::abs (amount - other.amount) < 1.0e-5f;
+            return slot == other.slot && source == other.source && polarity == other.polarity && std::abs (amount - other.amount) < 1.0e-5f;
         }
     };
 
@@ -242,7 +244,8 @@ private:
     size_t engineSection = 0;
     int shownModel = -1;
 
-    std::array<juce::TextButton, 5> tabs;
+    std::array<juce::TextButton, 6> tabs;
+    static constexpr std::array<int, 6> tabPages { 0, 1, 5, 2, 3, 4 }; // the page each tab shows; WAVE was added last
     int currentPage = 0, buildingPage = 0;
 
     juce::ComboBox presetBox;
@@ -257,7 +260,7 @@ private:
     EnvelopeDisplay ampEnvDisplay, filterEnvDisplay;
     juce::TooltipWindow tooltipWindow { this };
     std::array<juce::TextButton, 2> importButtons;
-    void importWavetable (int osc);
+    WavetableEditor waveEditor { processor };
 
     // Modulation by drag and drop.
     std::vector<Assignment> assignmentsFor (int dest) const;
@@ -266,7 +269,13 @@ private:
     void clearSlot (int slot);
     void showModMenu (ModKnob&);
     void updateModulationDisplay();
-    struct SlotParams { juce::RangedAudioParameter* source; juce::RangedAudioParameter* dest; juce::RangedAudioParameter* amount; };
+    struct SlotParams
+    {
+        juce::RangedAudioParameter* source;
+        juce::RangedAudioParameter* dest;
+        juce::RangedAudioParameter* amount;
+        juce::RangedAudioParameter* polarity;
+    };
     std::array<SlotParams, amv::mod::numSlots> slotParams {};
     ModSourceBar sourceBar;
     std::array<LfoDisplay, amv::mod::numLfos> lfoDisplays;

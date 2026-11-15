@@ -958,6 +958,55 @@ int main()
             check (modDestFor (id::cutoff) == mod::dstCutoff && modDestFor (id::gusRasp) == mod::dstEngine3
                        && modDestFor (id::oscBDetune) == mod::dstOscBDetune && modDestFor (id::glide) == -1,
                    "knobs map to their modulation destinations");
+
+            // Polarity: a bipolar macro rests in the middle and swings both ways.
+            auto b = open;
+            b.slots[0] = { mod::srcMacro1, mod::dstOscAPitch, 1.0f, mod::polarityBipolar };
+            b.modMacros[0] = 0.5f;
+            const auto centre = play (b, 1, {});
+            b.modMacros[0] = 0.75f;
+            const auto up = play (b, 1, {});
+            b.modMacros[0] = 0.25f;
+            const auto down = play (b, 1, {});
+            check (near (centre.hz, 220.0f, 0.1f) && near (up.hz, 880.0f, 0.4f) && near (down.hz, 55.0f, 0.1f),
+                   "a bipolar macro rests in the middle and swings both ways");
+            check (near (mod::shaped (-1.0f, mod::srcLfo1, mod::polarityUnipolar), 0.0f)
+                       && near (mod::shaped (1.0f, mod::srcLfo1, mod::polarityUnipolar), 1.0f)
+                       && near (mod::shaped (-0.4f, mod::srcLfo1, mod::polarityAuto), -0.4f)
+                       && near (mod::shaped (0.3f, mod::srcVelocity, mod::polarityAuto), 0.3f)
+                       && mod::isBipolar (mod::srcLfo2, mod::polarityAuto) && ! mod::isBipolar (mod::srcMacro1, mod::polarityAuto),
+                   "a unipolar LFO only pushes one way and Auto keeps each source as it is");
+            check (modDestFor (id::oscAWarpAmount) == mod::dstOscAWarp && modDestFor (id::oscBWarpAmount) == mod::dstOscBWarp,
+                   "the warp knobs are modulation destinations");
+        }
+
+        // Warp modes
+        {
+            EngineParams p;
+            p.engineLevel = 0.0f;
+            p.oscA.level = 0.8f;
+            p.oscA.table = 0;
+            p.oscA.position = 0.3f;
+            const auto plain = render (p);
+            bool finite = plain.finite && plain.peak > 0.01f, changes = true, silentTail = true;
+            p.oscA.warpAmount = 0.7f;
+            const auto offWithAmount = render (p);
+
+            for (int mode = 1; mode < warp::numModes; ++mode)
+            {
+                p.oscA.warp = mode;
+                p.slots[0] = {};
+                const auto r = render (p);
+                p.slots[0] = { mod::srcLfo1, mod::dstOscAWarp, 1.0f };
+                const auto moving = render (p);
+                finite = finite && r.finite && moving.finite && r.peak > 0.01f && r.peak < 4.0f && moving.peak < 4.0f;
+                silentTail = silentTail && r.tailPeak < 0.001f;
+                changes = changes && ! near (r.peak, plain.peak, 1.0e-4f);
+                std::printf ("      warp %-8s peak %.4f (off %.4f)\n", getWarpModes()[(size_t) mode], (double) r.peak, (double) plain.peak);
+            }
+            check (near (offWithAmount.peak, plain.peak, 1.0e-6f), "the warp amount does nothing while warp is off");
+            check (finite && silentTail, "every warp mode stays finite and bounded");
+            check (changes, "every warp mode changes the wave");
         }
 
         // Filter types

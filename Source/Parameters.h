@@ -155,6 +155,10 @@ inline constexpr auto oscAPitch = "oscAPitch";
 inline constexpr auto oscAFine = "oscAFine";
 inline constexpr auto oscALevel = "oscALevel";
 inline constexpr auto oscAWidth = "oscAWidth";
+inline constexpr auto oscAWarp = "oscAWarp";
+inline constexpr auto oscAWarpAmount = "oscAWarpAmount";
+inline constexpr auto oscBWarp = "oscBWarp";
+inline constexpr auto oscBWarpAmount = "oscBWarpAmount";
 inline constexpr auto oscBTable = "oscBTable";
 inline constexpr auto oscBPos = "oscBPosition";
 inline constexpr auto oscBUnison = "oscBUnison";
@@ -209,6 +213,7 @@ inline int modDestFor (const juce::String& paramId)
         { id::oscALevel, mod::dstOscALevel }, { id::oscBLevel, mod::dstOscBLevel },
         { id::oscADetune, mod::dstOscADetune }, { id::oscBDetune, mod::dstOscBDetune },
         { id::oscAPitch, mod::dstOscAPitch }, { id::oscBPitch, mod::dstOscBPitch },
+        { id::oscAWarpAmount, mod::dstOscAWarp }, { id::oscBWarpAmount, mod::dstOscBWarp },
         { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
         { id::vibDepth, mod::dstVibrato }, { id::vibRate, mod::dstVibRate }, { id::level, mod::dstVolume },
     };
@@ -382,6 +387,14 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::oscALevel, "Osc A Level", Range (0.0f, 1.0f), 0.0f);
     add (id::oscAWidth, "Osc A Width", Range (0.0f, 1.0f), 0.7f);
 
+    juce::StringArray warpModes;
+    for (const auto* n : getWarpModes())
+        warpModes.add (n);
+    addChoice (id::oscAWarp, "Osc A Warp Mode", warpModes, 0);
+    add (id::oscAWarpAmount, "Osc A Warp", Range (0.0f, 1.0f), 0.0f);
+    addChoice (id::oscBWarp, "Osc B Warp Mode", warpModes, 0);
+    add (id::oscBWarpAmount, "Osc B Warp", Range (0.0f, 1.0f), 0.0f);
+
     addChoice (id::oscBTable, "Osc B Table", tableNames, 1);
     add (id::oscBPos, "Osc B Position", Range (0.0f, 1.0f), 0.4f);
     add (id::oscBUnison, "Osc B Unison", Range (1.0f, 7.0f, 1.0f), 1.0f);
@@ -407,6 +420,9 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         modSources.add (n);
     for (const auto* n : getModDests())
         modDests.add (n);
+    juce::StringArray polarities;
+    for (const auto* n : getModPolarities())
+        polarities.add (n);
 
     for (int i = 0; i < mod::numLfos; ++i)
     {
@@ -426,6 +442,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         addChoice (id::slot (i, "Source").toRawUTF8(), (name + "Source").toRawUTF8(), modSources, 0);
         addChoice (id::slot (i, "Dest").toRawUTF8(), (name + "Destination").toRawUTF8(), modDests, i == 0 ? 1 : 0);
         add (id::slot (i, "Amount").toRawUTF8(), (name + "Amount").toRawUTF8(), Range (-1.0f, 1.0f), 0.0f);
+        addChoice (id::slot (i, "Polarity").toRawUTF8(), (name + "Polarity").toRawUTF8(), polarities, 0);
     }
 
     // Arpeggiator
