@@ -134,6 +134,10 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         modelKnobs.push_back (makeKnobs (true, { { id::claBreath, "BREATH" }, { id::claReed, "REED" }, { id::claGrowl, "GROWL" }, { id::claBody, "BODY" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::truBlow, "BLOW" }, { id::truBlare, "BLARE" }, { id::truRasp, "RASP" }, { id::truMute, "MUTE" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::vioBow, "BOW" }, { id::vioPosition, "POSITION" }, { id::vioScratch, "SCRATCH" }, { id::vioBody, "BODY" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::sarPluck, "PLUCK" }, { id::sarDecay, "DECAY" }, { id::sarDrone, "DRONE" }, { id::sarTone, "TONE" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::kanPluck, "PLUCK" }, { id::kanDecay, "DECAY" }, { id::kanShimmer, "SHIMMER" }, { id::kanTremolo, "TREMOLO" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::darStrike, "STRIKE" }, { id::darSnap, "SNAP" }, { id::darDecay, "DECAY" }, { id::darRing, "RING" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::voxVowel, "VOWEL" }, { id::voxBreath, "BREATH" }, { id::voxSize, "SIZE" }, { id::voxTension, "TENSION" } }));
     }
     {
         auto& s = addSection ("PERFORMANCE", false, 0, 6.0f);

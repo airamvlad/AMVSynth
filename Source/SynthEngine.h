@@ -28,8 +28,15 @@ enum class Model
     dvojnice,
     clarinet,
     truba,
-    violin
+    violin,
+    sargija,
+    kanun,
+    darbuka,
+    voice
 };
+
+/** Drums are struck again on every note, even in mono legato. */
+inline bool isDrum (Model m) noexcept { return m == Model::tapan || m == Model::darbuka; }
 
 enum class Ornament
 {
@@ -95,6 +102,10 @@ struct EngineParams
     //   clarinet: breath, reed, growl, body
     //   truba: blow, blare, rasp, mute
     //   violin: bow, position, scratch, body
+    //   sargija: pluck, decay, drone string level, tone
+    //   kanun: pluck, decay, shimmer, tremolo
+    //   darbuka: strike (dum to tek), snap, decay, ring
+    //   voice: vowel, breath, size, tension
     std::array<float, 4> macro { 0.7f, 0.4f, 0.3f, 0.5f };
 
     // Performance
@@ -373,6 +384,10 @@ public:
                     case Model::clarinet:   s = renderClarinet (pitch, sr, p, mc); break;
                     case Model::truba:      s = renderTruba (pitch, sr, p, mc); break;
                     case Model::violin:     s = renderViolin (pitch, sr, p, mc); break;
+                    case Model::sargija:    s = renderSargija (pitch, sr, p, mc); break;
+                    case Model::kanun:      s = renderKanun (pitch, sr, p, mc); break;
+                    case Model::darbuka:    s = renderDarbuka (pitch, sr, p, mc); break;
+                    case Model::voice:      s = renderVoice (pitch, sr, p, mc); break;
                 }
 
                 s *= p.engineLevel;
@@ -729,6 +744,54 @@ private:
                 return;
             }
 
+            case Model::sargija:
+            case Model::kanun:
+            {
+                const bool isKanun = p.model == Model::kanun;
+                const float t60 = (isKanun ? 0.6f : 0.3f) * std::pow (isKanun ? 20.0f : 18.0f, p.macro[1]);
+                mc.loss = std::pow (10.0f, -3.0f / (juce::jmax (20.0f, hz) * t60));
+                mc.brightCoeff = isKanun ? 0.75f : 0.35f + 0.6f * p.macro[3];
+                mc.fastCoeff = onePole ((isKanun ? 1500.0f : 900.0f) * std::exp2 (p.macro[0] * 3.5f));
+                mc.detune = isKanun ? p.macro[2] * 0.1f : 0.0f;
+                mc.slowCoeff = onePole (25.0f);
+                mc.level = isKanun ? 0.65f : 0.95f;
+                bands[0].set (isKanun ? 520.0f : 420.0f, 2.5f, sr);
+                bands[1].set (isKanun ? 3200.0f : 2400.0f, 2.0f, sr);
+                return;
+            }
+
+            case Model::darbuka:
+            {
+                mc.level = 0.9f;
+                mc.loss = std::exp (-1.0f / ((0.03f + 0.35f * p.macro[2] * p.macro[2]) * sr));
+                mc.clickDecay = std::exp (-1.0f / (0.012f * sr));
+                mc.slowCoeff = std::exp (-1.0f / (0.008f * sr));
+                bands[0].set (3500.0f, 1.5f, sr);
+                bands[1].set (7500.0f, 2.0f, sr);
+                return;
+            }
+
+            case Model::voice:
+            {
+                // A E I O U, three formants each, for a voice of average size.
+                static const float vowels[5][3] { { 730.0f, 1090.0f, 2440.0f }, { 530.0f, 1840.0f, 2480.0f }, { 270.0f, 2290.0f, 3010.0f },
+                                                  { 570.0f, 840.0f, 2410.0f }, { 300.0f, 870.0f, 2240.0f } };
+                const float x = juce::jlimit (0.0f, 1.0f, p.macro[0]) * 4.0f;
+                const int seg = juce::jmin (3, (int) x);
+                const float f = x - (float) seg;
+                const float size = std::exp2 ((0.5f - p.macro[2]) * 0.8f); // small voices have higher formants
+                const float qs[3] { 7.0f, 9.0f, 10.0f };
+
+                for (size_t k = 0; k < 3; ++k)
+                    bands[k].set ((vowels[seg][k] + (vowels[seg + 1][k] - vowels[seg][k]) * f) * size, qs[k], sr);
+
+                mc.level = 6.0f;
+                mc.brightCoeff = onePole (900.0f * std::exp2 (p.macro[3] * 3.0f));
+                mc.slowCoeff = onePole (4.0f);
+                mc.fastCoeff = onePole (2500.0f);
+                return;
+            }
+
             case Model::juzniVetar:
                 return;
 
@@ -1031,6 +1094,125 @@ private:
 
         const float body = bands[0].process (s) * 0.5f + bands[1].process (s) * 0.35f;
         return (s * 0.75f + body) * mc.level;
+    }
+
+    /** Sargija: a long-necked lute with thin metal strings. The tune is played on one string
+        while another rings along as a drone on the root of the scale. */
+    float renderSargija (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        float excite = 0.0f;
+        if (exciteLeft > 0)
+        {
+            exciteLp += (noise() - exciteLp) * mc.fastCoeff;
+            excite = exciteLp * 1.4f;
+            --exciteLeft;
+        }
+
+        const float filterDelay = (1.0f - mc.brightCoeff) / mc.brightCoeff;
+        float s = strings[0].process (sr / midiToHz (pitch) - filterDelay, excite, mc.brightCoeff, mc.loss);
+
+        if (p.macro[2] > 0.001f)
+        {
+            // The drone: the scale root in the octave below middle C, with a longer ring.
+            const float dronePitch = 48.0f + (float) p.scaleRoot;
+            s += p.macro[2] * 0.8f * strings[1].process (sr / midiToHz (dronePitch) - filterDelay, excite * 0.7f, mc.brightCoeff,
+                                                            0.5f + 0.5f * mc.loss);
+        }
+
+        slowNoise += (s - slowNoise) * mc.slowCoeff;
+        s -= slowNoise;
+
+        const float body = bands[0].process (s) * 0.4f + bands[1].process (s) * 0.5f;
+        return (s * 0.7f + body) * mc.level;
+    }
+
+    /** Kanun: a plucked zither with several strings per note. Bright and long ringing; the
+        tremolo control picks the note again and again while it is held. */
+    float renderKanun (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float tremolo = p.macro[3];
+
+        drumTime += 1.0f / sr;
+        if (tremolo > 0.02f && held && drumTime >= 1.0f / (6.0f + 12.0f * tremolo))
+        {
+            drumTime = 0.0f;
+            exciteLeft = juce::jmax (2, (int) (sr / midiToHz (pitch)));
+        }
+
+        float excite = 0.0f;
+        if (exciteLeft > 0)
+        {
+            exciteLp += (noise() - exciteLp) * mc.fastCoeff;
+            excite = exciteLp * 1.3f;
+            --exciteLeft;
+        }
+
+        const float filterDelay = (1.0f - mc.brightCoeff) / mc.brightCoeff;
+        float s = strings[0].process (sr / midiToHz (pitch - mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss)
+                  + 0.8f * strings[1].process (sr / midiToHz (pitch + mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
+
+        slowNoise += (s - slowNoise) * mc.slowCoeff;
+        s -= slowNoise;
+
+        const float body = bands[0].process (s) * 0.3f + bands[1].process (s) * 0.45f;
+        return (s * 0.6f + body) * mc.level;
+    }
+
+    /** Darbuka: a goblet drum. Struck in the middle it gives the deep "dum", at the rim the
+        short high "tek"; the strike control moves between the two. */
+    float renderDarbuka (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float strike = p.macro[0], snap = p.macro[1], ring = p.macro[3];
+        const float twoPi = juce::MathConstants<float>::twoPi;
+
+        if (drumTime <= 0.0f)
+        {
+            drumEnv = 1.0f;
+            drumDrop = 1.0f;
+            clickEnv = 1.0f;
+        }
+        drumTime += 1.0f / sr;
+
+        const float inc = midiToHz (pitch + drumDrop * 3.0f) / sr;
+        const float low = std::sin (drumPhase[0] * twoPi);
+        const float high = std::sin (drumPhase[1] * twoPi) + 0.6f * std::sin (phases[0] * twoPi);
+        advance (drumPhase[0], inc);
+        advance (drumPhase[1], juce::jmin (0.45f, inc * 2.3f));
+        advance (phases[0], juce::jmin (0.45f, inc * 3.6f));
+
+        // The rim modes die much faster than the middle of the skin unless the shell rings.
+        const float highEnv = std::pow (drumEnv, 3.5f - 2.5f * ring);
+        float s = low * drumEnv * (1.0f - 0.85f * strike) + high * highEnv * (0.15f + 0.6f * strike);
+        s *= juce::jmin (1.0f, drumTime * 1500.0f);
+
+        const float white = noise();
+        const float slap = (bands[0].process (white) + bands[1].process (white) * (0.3f + strike)) * clickEnv * snap * (0.5f + strike)
+                           * (0.4f + 0.8f * velocity);
+
+        drumEnv *= mc.loss;
+        drumDrop *= mc.slowCoeff;
+        clickEnv *= mc.clickDecay;
+        return (s + slap) * mc.level;
+    }
+
+    /** Voice: a sung vowel. The vocal folds buzz, three resonances of the mouth and throat shape
+        the vowel, and some breath leaks through. */
+    float renderVoice (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float breath = p.macro[1];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+
+        const float inc = midiToHz (pitch + slowNoise * 4.0f) / sr;
+        float s = saw (phases[0], inc) * 0.7f + pulse (phases[0], inc, 0.3f) * 0.4f;
+        advance (phases[0], inc);
+
+        reedLp += (s - reedLp) * mc.brightCoeff;
+        const float source = reedLp * (1.0f - 0.5f * breath) + fastNoise * breath * 1.2f;
+
+        const float mouth = bands[0].process (source) * 1.0f + bands[1].process (source) * 0.7f + bands[2].process (source) * 0.45f;
+        return (mouth + source * 0.08f) * mc.level;
     }
 
     /** Tapan: a large drum with two skins. The heavy beater gives a low thump whose pitch drops
@@ -1344,7 +1526,7 @@ private:
             heldNotes.push_back (note);
 
             // A drum is struck again on every note; the other models slide.
-            if (legato && params.model != Model::tapan)
+            if (legato && ! isDrum (params.model))
                 v.slideTo (e);
             else
                 v.start (e, counter, params, true);

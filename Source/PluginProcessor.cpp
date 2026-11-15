@@ -74,6 +74,10 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
         case Model::clarinet: p.macro = { value (id::claBreath), value (id::claReed), value (id::claGrowl), value (id::claBody) }; break;
         case Model::truba: p.macro = { value (id::truBlow), value (id::truBlare), value (id::truRasp), value (id::truMute) }; break;
         case Model::violin: p.macro = { value (id::vioBow), value (id::vioPosition), value (id::vioScratch), value (id::vioBody) }; break;
+        case Model::sargija: p.macro = { value (id::sarPluck), value (id::sarDecay), value (id::sarDrone), value (id::sarTone) }; break;
+        case Model::kanun: p.macro = { value (id::kanPluck), value (id::kanDecay), value (id::kanShimmer), value (id::kanTremolo) }; break;
+        case Model::darbuka: p.macro = { value (id::darStrike), value (id::darSnap), value (id::darDecay), value (id::darRing) }; break;
+        case Model::voice: p.macro = { value (id::voxVowel), value (id::voxBreath), value (id::voxSize), value (id::voxTension) }; break;
         case Model::juzniVetar:
         case Model::accordion: break;
     }
