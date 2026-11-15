@@ -168,6 +168,14 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
     fx.process (work, readFxParams(), transport);
 
+    // Peak level after the effects, for the meter in the editor.
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float peak = work.getMagnitude (ch, 0, numSamples);
+        if (peak > outputPeak[(size_t) ch].load (std::memory_order_relaxed))
+            outputPeak[(size_t) ch].store (peak, std::memory_order_relaxed);
+    }
+
     if (buffer.getNumChannels() >= 2)
     {
         buffer.copyFrom (0, 0, work, 0, 0, numSamples);
@@ -213,6 +221,7 @@ amv::FxParams AMVSynthAudioProcessor::readFxParams() const
     p.duckOn = value (id::duckOn) > 0.5f;
     p.duckDepth = value (id::duckDepth) * 0.01f;
     p.duckRelease = value (id::duckRelease) * 0.01f;
+    p.order = juce::roundToInt (value (id::fxOrder));
     return p;
 }
 

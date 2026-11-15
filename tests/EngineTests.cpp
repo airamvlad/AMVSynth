@@ -434,6 +434,57 @@ int main()
             check (firstL > 0.1f && firstR < 0.01f && secondR > 0.02f && between < 0.01f, "ping-pong delay echoes at 3/16 on alternating sides");
         }
 
+        // Effect order: with the gate after the delay there are no echoes while the gate is shut.
+        {
+            const auto echoLevel = [&] (int order)
+            {
+                FxParams p;
+                p.order = order;
+                p.gateOn = true;
+                p.gatePattern = 1;    // offbeat: shut on the first step
+                p.gateRate = 0;       // 1/8 notes, 12000 samples at 120 bpm
+                p.gateLength = 1.0f;
+                p.delayOn = true;
+                p.delayTime = 0;      // 1/16, so the echo of a hit at 12000 lands at 18000 and 24000
+                p.delayFeedback = 0.6f;
+                p.delayMix = 0.5f;
+                p.delayPingPong = false;
+                float inShutStep = 0.0f;
+                bool clicked = false;
+                FxChain fx;
+                fx.prepare (sr, block);
+                for (int b = 0; b < 110; ++b)
+                {
+                    juce::AudioBuffer<float> buffer (2, block);
+                    buffer.clear();
+                    if (! clicked && b * block >= 12100) // a click early in the open step
+                    {
+                        clicked = true;
+                        for (int i = 0; i < 48; ++i)
+                        {
+                            buffer.setSample (0, i, 0.8f);
+                            buffer.setSample (1, i, 0.8f);
+                        }
+                    }
+                    TransportInfo t;
+                    t.playing = true;
+                    t.bpm = 120.0;
+                    t.ppq = (double) (b * block) / 24000.0;
+                    fx.process (buffer, p, t);
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const int pos = b * block + i;
+                        if (pos > 25000 && pos < 35000) // the middle of the next shut step
+                            inShutStep = juce::jmax (inShutStep, std::abs (buffer.getSample (0, i)));
+                    }
+                }
+                return inShutStep;
+            };
+            const float gateFirst = echoLevel (0), gateLast = echoLevel (1);
+            std::printf ("      echo in the shut step: %.4f gate first, %.4f gate last\n", (double) gateFirst, (double) gateLast);
+            check (gateFirst > 0.02f && gateLast < 0.002f, "effect order decides whether the gate chops the echoes");
+        }
+
         // Distortion does not alias: drive a 5 kHz sine hard and look at 3 kHz, where the ninth
         // harmonic (45 kHz) would land if it folded back at 48 kHz.
         {

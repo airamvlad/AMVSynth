@@ -51,8 +51,31 @@ inline const std::array<DelayTimeDef, 5>& getDelayTimes()
     return times;
 }
 
+/** The four effects that can change places. The kick duck and the limiter always come last. */
+enum class FxStage { distortion, gate, delay, reverb };
+
+struct FxOrderDef
+{
+    const char* name;
+    std::array<FxStage, 4> stages;
+};
+
+inline const std::array<FxOrderDef, 4>& getFxOrders()
+{
+    using S = FxStage;
+    static const std::array<FxOrderDef, 4> orders { {
+        { "Dist > Gate > Delay > Reverb", { S::distortion, S::gate, S::delay, S::reverb } },
+        { "Dist > Delay > Reverb > Gate", { S::distortion, S::delay, S::reverb, S::gate } }, // the gate chops the echoes and the tail too
+        { "Gate > Dist > Delay > Reverb", { S::gate, S::distortion, S::delay, S::reverb } },
+        { "Delay > Reverb > Dist > Gate", { S::delay, S::reverb, S::distortion, S::gate } }, // everything goes through the distortion
+    } };
+    return orders;
+}
+
 struct FxParams
 {
+    int order = 0;         // index into getFxOrders()
+
     bool distOn = false;
     int distType = 0;
     float distDriveDb = 12.0f, distMix = 1.0f;
@@ -133,27 +156,42 @@ public:
         const double beatsPerSample = bpm / 60.0 / sampleRate;
         const double startBeat = t.playing ? t.ppq : freeBeat;
 
-        if (p.distOn)
-            distort (left, right, numSamples, p);
-
-        if (p.gateOn)
-            gate (left, right, numSamples, p, startBeat, beatsPerSample);
-        else
+        if (! p.gateOn)
             gateGain = 1.0f;
 
-        if (p.delayOn)
-            delay (left, right, numSamples, p, bpm);
-
-        if (p.reverbOn)
+        for (const auto stage : getFxOrders()[(size_t) juce::jlimit (0, (int) getFxOrders().size() - 1, p.order)].stages)
         {
-            juce::Reverb::Parameters rp;
-            rp.roomSize = p.reverbSize;
-            rp.damping = p.reverbDamp;
-            rp.wetLevel = p.reverbMix;
-            rp.dryLevel = 1.0f - 0.5f * p.reverbMix;
-            rp.width = 1.0f;
-            reverb.setParameters (rp);
-            reverb.processStereo (left, right, numSamples);
+            switch (stage)
+            {
+                case FxStage::distortion:
+                    if (p.distOn)
+                        distort (left, right, numSamples, p);
+                    break;
+
+                case FxStage::gate:
+                    if (p.gateOn)
+                        gate (left, right, numSamples, p, startBeat, beatsPerSample);
+                    break;
+
+                case FxStage::delay:
+                    if (p.delayOn)
+                        delay (left, right, numSamples, p, bpm);
+                    break;
+
+                case FxStage::reverb:
+                    if (p.reverbOn)
+                    {
+                        juce::Reverb::Parameters rp;
+                        rp.roomSize = p.reverbSize;
+                        rp.damping = p.reverbDamp;
+                        rp.wetLevel = p.reverbMix;
+                        rp.dryLevel = 1.0f - 0.5f * p.reverbMix;
+                        rp.width = 1.0f;
+                        reverb.setParameters (rp);
+                        reverb.processStereo (left, right, numSamples);
+                    }
+                    break;
+            }
         }
 
         if (p.duckOn)

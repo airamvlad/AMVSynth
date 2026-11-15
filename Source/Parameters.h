@@ -110,6 +110,7 @@ inline constexpr auto reverbMix = "reverbMix";
 inline constexpr auto duckOn = "duckOn";
 inline constexpr auto duckDepth = "duckDepth";
 inline constexpr auto duckRelease = "duckRelease";
+inline constexpr auto fxOrder = "fxOrder";
 inline constexpr auto scaleRoot = "scaleRoot";
 inline constexpr auto scale = "scale";
 inline constexpr auto snap = "snap";
@@ -415,6 +416,11 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::reverbSize, "Reverb Size", Range (0.0f, 1.0f), 0.6f);
     add (id::reverbDamp, "Reverb Damp", Range (0.0f, 1.0f), 0.4f);
     add (id::reverbMix, "Reverb Mix", Range (0.0f, 100.0f), 25.0f, "%");
+
+    juce::StringArray fxOrders;
+    for (const auto& o : getFxOrders())
+        fxOrders.add (o.name);
+    addChoice (id::fxOrder, "Effect Order", fxOrders, 0);
 
     addBool (id::duckOn, "Kick Duck On", false);
     add (id::duckDepth, "Kick Duck Depth", Range (0.0f, 100.0f), 80.0f, "%");

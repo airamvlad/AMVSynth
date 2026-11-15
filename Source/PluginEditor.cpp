@@ -259,9 +259,19 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         s.knobs = makeKnobs (false, { { id::reverbSize, "SIZE" }, { id::reverbDamp, "DAMP" }, { id::reverbMix, "MIX" } });
     }
     {
-        auto& s = addSection ("KICK DUCK", false, 2, 1.0f);
+        auto& s = addSection ("KICK DUCK", false, 2, 4.0f);
         s.column.push_back (&makeToggle (id::duckOn, "ON", false)->button);
         s.knobs = makeKnobs (false, { { id::duckDepth, "DEPTH" }, { id::duckRelease, "RELEASE" } });
+    }
+    {
+        auto& s = addSection ("ROUTING", false, 2, 3.0f);
+        s.column.push_back (&makeChoice (id::fxOrder, false)->box);
+    }
+    {
+        auto& s = addSection ("OUTPUT", false, 2, 4.0f);
+        s.display = &levelMeter;
+        s.knobs = makeKnobs (false, { { id::level, "LEVEL" } });
+        addChildComponent (levelMeter);
     }
     buildingPage = 0;
 
@@ -496,6 +506,26 @@ void AMVSynthAudioProcessorEditor::timerCallback()
         patternDisplay.repaint();
     }
 
+    // Output meter: jump up to new peaks, fall back slowly.
+    bool meterChanged = false;
+    for (size_t ch = 0; ch < 2; ++ch)
+    {
+        const float peak = processor.outputPeak[ch].exchange (0.0f, std::memory_order_relaxed);
+        const float next = juce::jmax (peak, levelMeter.level[ch] * 0.8f);
+        meterChanged = meterChanged || std::abs (next - levelMeter.level[ch]) > 1.0e-4f;
+        levelMeter.level[ch] = next < 1.0e-4f ? 0.0f : next;
+
+        if (peak >= 0.99f)
+        {
+            levelMeter.clipHold = 20; // one second at the timer rate
+            meterChanged = true;
+        }
+    }
+    if (levelMeter.clipHold > 0 && --levelMeter.clipHold == 0)
+        meterChanged = true;
+    if (meterChanged && levelMeter.isVisible())
+        levelMeter.repaint();
+
     const auto param = [this] (const char* paramId) { return processor.apvts.getRawParameterValue (paramId)->load(); };
     const auto sync = [] (WaveDisplay& d, int table, float position, float level)
     {
@@ -509,6 +539,40 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     };
     sync (waveA, juce::roundToInt (param (amv::id::oscATable)), param (amv::id::oscAPos), param (amv::id::oscALevel));
     sync (waveB, juce::roundToInt (param (amv::id::oscBTable)), param (amv::id::oscBPos), param (amv::id::oscBLevel));
+}
+
+void AMVSynthAudioProcessorEditor::LevelMeter::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    auto area = getLocalBounds().toFloat();
+    g.setColour (colour::background);
+    g.fillRoundedRectangle (area, 6.0f);
+    area.reduce (10.0f, 10.0f);
+
+    // The clip light on the right, then one bar per channel from -48 dB to 0 dB.
+    auto light = area.removeFromRight (10.0f);
+    area.removeFromRight (6.0f);
+    g.setColour (clipHold > 0 ? colour::red : colour::track);
+    g.fillRoundedRectangle (light, 3.0f);
+
+    const float barHeight = juce::jmin (10.0f, (area.getHeight() - 6.0f) * 0.5f);
+    auto bars = area.withSizeKeepingCentre (area.getWidth(), barHeight * 2.0f + 6.0f);
+
+    for (size_t ch = 0; ch < 2; ++ch)
+    {
+        auto bar = bars.removeFromTop (barHeight);
+        bars.removeFromTop (6.0f);
+        g.setColour (colour::track);
+        g.fillRoundedRectangle (bar, 3.0f);
+
+        const float db = juce::Decibels::gainToDecibels (level[ch], -48.0f);
+        const float fraction = juce::jlimit (0.0f, 1.0f, (db + 48.0f) / 48.0f);
+        if (fraction > 0.0f)
+        {
+            g.setColour (db > -3.0f ? colour::red : colour::teal);
+            g.fillRoundedRectangle (bar.withWidth (juce::jmax (6.0f, bar.getWidth() * fraction)), 3.0f);
+        }
+    }
 }
 
 void AMVSynthAudioProcessorEditor::WaveDisplay::paint (juce::Graphics& g)

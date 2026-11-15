@@ -184,6 +184,7 @@ inline const std::vector<Preset>& getFactoryPresets()
             { duckOn, 1 }, { reverbOn, 1 }, { reverbSize, 0.75f }, { reverbMix, 28.0f }, { delayOn, 1 }, { delayMix, 20.0f } } },
 
         { "Vowel Gate 9/8", {
+            { fxOrder, 1 },
             { level, -11.0f },
             { engineLevel, 0.0f }, { oscATable, vowels }, { oscAPos, 0.2f }, { oscAUnison, 3.0f }, { oscADetune, 12.0f }, { oscALevel, 0.9f },
             { mono, 0 }, { vibDepth, 0.0f }, { cutoff, 6000.0f }, { filterEnv, 0.0f }, { ampA, 30.0f }, { ampS, 1.0f }, { ampR, 250.0f },

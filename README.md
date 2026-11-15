@@ -2,14 +2,14 @@
 
 A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytrance. All sound is synthesized (wavetables and physical modelling), with no samples.
 
-Status: early development. What works now:
+What it does:
 
 - Seventeen models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval, gajde with a drone on the scale root, zurla, tambura (plucked string), tapan (drum), dvojnice (double flute), clarinet, truba (brass), violin, šargija with a drone string, kanun with tremolo picking, darbuka and a sung voice
 - Two wavetable oscillators (Basic Shapes, Acid Saw, PWM, Vowels, Kaval, Zurla, Reeds, Bells) with up to 7 voice unison spread in stereo, plus a sub oscillator and noise, on their own page and mixed with the Balkan engine
 - Modulation on its own page: two LFOs (free or tempo-synced), four macros and a six slot matrix with LFOs, filter envelope, velocity, mod wheel and macros as sources
 - Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
-- Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter
+- Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Ornaments played automatically: grace note, mordent, trill and fall
 - Mono legato or 16 voices, glide, delayed vibrato, pitch bend, low-pass filter and two envelopes
@@ -22,7 +22,9 @@ Status: early development. What works now:
 
 ## Download a build
 
-Every change is built automatically. Open the **Actions** tab, pick the latest successful **Build** run and download `AMVSynth-Windows` or `AMVSynth-macOS` from the Artifacts section.
+Download `AMVSynth-Windows.zip` or `AMVSynth-macOS.zip` from the latest entry on the **Releases** page.
+
+Every change is also built automatically: open the **Actions** tab, pick the latest successful **Build** run and download `AMVSynth-Windows` or `AMVSynth-macOS` from the Artifacts section. The macOS artifact contains a second zip, which keeps the file permissions intact.
 
 Install the VST3:
 
