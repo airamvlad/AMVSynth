@@ -8,8 +8,11 @@ What it does:
 - Two wavetable oscillators (Basic Shapes, Acid Saw, PWM, Vowels, Kaval, Zurla, Reeds, Bells) with up to 7 voice unison spread in stereo, plus a sub oscillator and noise, on their own page and mixed with the Balkan engine
 - Drag and drop modulation: drag a source from the MOD SOURCES row onto a knob, shift-drag the knob to set the depth, right-click to invert or remove. Knobs show a ring for each modulation and a dot at the value as it moves
 - Each modulation is unipolar or bipolar: Auto keeps LFOs swinging both ways and everything else one way, and you can force either from the MOD page or the right-click menu of a knob
+- Four LFOs with a shape editor: set an LFO to Custom and draw it with points and curves on a 16-step grid, or start from stairs, a sidechain pump or random steps. Each LFO runs free, retriggers with every note, or runs once like an envelope
+- A third envelope (ENV 3) that is only a modulation source
+- Envelope times and the effects are modulation destinations too: amp and filter attack, decay and release, distortion drive and mix, gate depth, delay feedback, tone and mix, reverb size and mix
 - Warp on both wavetable oscillators (Bend +, Bend -, PWM, Sync, Mirror) with a WARP knob that can be modulated, and a 3D view of all frames of the table with the playing position marked
-- Modulation on its own page: two LFOs (free or tempo-synced), four macros and an eight slot matrix with LFOs, filter envelope, velocity, mod wheel, macros, pressure and timbre as sources
+- Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
 - Factory presets for the folk models and for psytrance basses, arps, leads and pads, plus saving and loading your own presets as files
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
 - Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter

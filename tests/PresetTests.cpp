@@ -206,6 +206,63 @@ int main()
         file.deleteFile();
     }
 
+    // A drawn LFO shape is saved with the project, and a modulated effect is heard.
+    {
+        std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());
+        auto* first = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        bool ok = first != nullptr && first->getLfoPoints (2).size() == 2;
+        if (ok)
+            first->setLfoShape (2, { { 0.0f, -1.0f, 0.3f }, { 0.25f, 0.5f, 0.0f }, { 1.0f, 1.0f, 0.0f } }, true);
+
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
+        other->setStateInformation (state.getData(), (int) state.getSize());
+        auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
+        ok = ok && second != nullptr && second->getLfoPoints (2).size() == 3 && std::abs (second->getLfoPoints (2)[1].x - 0.25f) < 1.0e-4f
+                 && std::abs (second->getLfoPoints (2)[0].curve - 0.3f) < 1.0e-3f && second->getLfoPoints (0).size() == 2;
+
+        // The level long after the note, with the reverb mix at zero and then opened by a macro.
+        const auto tail = [] (bool modulated)
+        {
+            std::unique_ptr<juce::AudioProcessor> p (createPluginFilter());
+            auto& apvts = dynamic_cast<AMVSynthAudioProcessor*> (p.get())->apvts;
+            auto set = [&apvts] (const juce::String& paramId, float v) { auto* param = apvts.getParameter (paramId); param->setValueNotifyingHost (param->convertTo0to1 (v)); };
+            set (amv::id::reverbOn, 1.0f);
+            set (amv::id::reverbMix, 0.0f);
+            set (amv::id::reverbSize, 0.9f);
+            set (amv::id::macro (0), 1.0f);
+            if (modulated)
+            {
+                set (amv::id::slot (0, "Source"), (float) amv::mod::srcMacro1);
+                set (amv::id::slot (0, "Dest"), (float) amv::mod::dstReverbMix);
+                set (amv::id::slot (0, "Amount"), 1.0f);
+            }
+
+            p->prepareToPlay (48000.0, 512);
+            float peak = 0.0f;
+            for (int block = 0; block < 120; ++block)
+            {
+                juce::AudioBuffer<float> buffer (2, 512);
+                juce::MidiBuffer midi;
+                if (block == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 62, 0.9f), 0);
+                if (block == 20)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, 62), 0);
+                p->processBlock (buffer, midi);
+                if (block >= 90)
+                    peak = juce::jmax (peak, buffer.getMagnitude (0, 512));
+            }
+            return peak;
+        };
+        const float dry = tail (false), wet = tail (true);
+        ok = ok && dry < 1.0e-4f && wet > 1.0e-3f && wet < 2.0f;
+
+        std::printf ("%s  a drawn LFO shape is saved with the project and a macro opens the reverb (tail %.5f dry, %.5f modulated)\n",
+                     ok ? "ok  " : "FAIL", (double) dry, (double) wet);
+        failures += ok ? 0 : 1;
+    }
+
     std::printf ("%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

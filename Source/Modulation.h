@@ -3,7 +3,9 @@
 #include "Arpeggiator.h"
 
 #include <array>
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace amv
 {
@@ -23,6 +25,9 @@ enum Source
     srcMacro4,
     srcPressure,
     srcTimbre,
+    srcLfo3, // added later; the order is saved in projects, so new sources go at the end
+    srcLfo4,
+    srcEnv3,
     numSources
 };
 
@@ -59,11 +64,25 @@ enum Dest
     dstGrainDensity,
     dstGrainSpray,
     dstGrainScan,
+    dstAmpAttack,
+    dstAmpDecay,
+    dstAmpRelease,
+    dstFltAttack,
+    dstFltDecay,
+    dstFltRelease,
+    dstDistDrive, // from here on the effects, which are shared by all notes
+    dstDistMix,
+    dstGateDepth,
+    dstDelayFeedback,
+    dstDelayTone,
+    dstDelayMix,
+    dstReverbSize,
+    dstReverbMix,
     numDests
 };
 
 inline constexpr int numSlots = 8;
-inline constexpr int numLfos = 2;
+inline constexpr int numLfos = 4;
 inline constexpr int numMacros = 4;
 
 /** How a slot reads its source: as the source is by nature, always upwards only (0..1), or
@@ -75,11 +94,27 @@ enum Polarity
     polarityBipolar
 };
 
+/** The source of LFO 0 to 3. */
+inline int lfoSource (int lfo) noexcept
+{
+    return lfo < 2 ? srcLfo1 + lfo : srcLfo3 + (lfo - 2);
+}
+
 /** LFOs and timbre swing both ways by nature; the other sources only go up from zero. */
 inline bool isBipolarSource (int source) noexcept
 {
-    return source == srcLfo1 || source == srcLfo2 || source == srcTimbre;
+    return source == srcLfo1 || source == srcLfo2 || source == srcLfo3 || source == srcLfo4 || source == srcTimbre;
 }
+
+/** The effects are not part of a voice: they follow the shared sources and, for the sources
+    that belong to a note, the newest note. */
+inline bool isGlobalDest (int dest) noexcept
+{
+    return dest >= dstDistDrive && dest <= dstReverbMix;
+}
+
+/** How far a full modulation moves an envelope time or a tone control, in octaves. */
+inline constexpr float timeOctaves = 5.0f;
 
 inline bool isBipolar (int source, int polarity) noexcept
 {
@@ -126,7 +161,8 @@ inline const std::array<const char*, warp::numModes>& getWarpModes()
 inline const std::array<const char*, mod::numSources>& getModSources()
 {
     static const std::array<const char*, mod::numSources> names { "None", "LFO 1", "LFO 2", "Filter Env", "Velocity", "Mod Wheel",
-                                                                  "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Pressure", "Timbre" };
+                                                                  "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Pressure", "Timbre",
+                                                                  "LFO 3", "LFO 4", "Env 3" };
     return names;
 }
 
@@ -138,15 +174,131 @@ inline const std::array<const char*, mod::numDests>& getModDests()
                                                                 "Engine Knob 1", "Engine Knob 2", "Engine Knob 3", "Engine Knob 4",
                                                                 "Osc A Detune", "Osc B Detune", "Osc A Pitch", "Osc B Pitch",
                                                                 "Osc A Warp", "Osc B Warp", "Sampler Level", "Sampler Pitch", "Grain Position", "Grain Size",
-                                                                "Grain Density", "Grain Spray", "Grain Scan" };
+                                                                "Grain Density", "Grain Spray", "Grain Scan",
+                                                                "Amp Attack", "Amp Decay", "Amp Release", "Filter Attack", "Filter Decay", "Filter Release",
+                                                                "Distortion Drive", "Distortion Mix", "Gate Depth", "Delay Feedback", "Delay Tone",
+                                                                "Delay Mix", "Reverb Size", "Reverb Mix" };
     return names;
 }
 
-inline const std::array<const char*, 5>& getLfoShapes()
+inline constexpr int lfoShapeCustom = 5;
+
+inline const std::array<const char*, 6>& getLfoShapes()
 {
-    static const std::array<const char*, 5> names { "Sine", "Triangle", "Saw", "Square", "Random" };
+    static const std::array<const char*, 6> names { "Sine", "Triangle", "Saw", "Square", "Random", "Custom" };
     return names;
 }
+
+namespace lfoMode
+{
+enum Mode
+{
+    free = 0,   // runs all the time and follows the host position when synced
+    retrigger,  // starts again with every note
+    oneShot,    // starts with every note, runs once and stays at its end, like an envelope
+    numModes
+};
+} // namespace lfoMode
+
+inline const std::array<const char*, lfoMode::numModes>& getLfoModes()
+{
+    static const std::array<const char*, lfoMode::numModes> names { "Free", "Retrigger", "One Shot" };
+    return names;
+}
+
+/** A point of a drawn LFO shape. `curve` bends the line to the next point: 0 is straight. */
+struct LfoPoint
+{
+    float x = 0.0f, y = 0.0f, curve = 0.0f; // 0..1, -1..1, -1..1
+};
+
+/** A drawn LFO shape: the points it was made from and one cycle as a table. */
+class LfoShape
+{
+public:
+    static constexpr int size = 512;
+    static constexpr int maxPoints = 64;
+
+    explicit LfoShape (std::vector<LfoPoint> newPoints) : points (std::move (newPoints))
+    {
+        // Keep the points in order, inside the cycle, with one at each end.
+        for (auto& p : points)
+        {
+            p.x = std::isfinite (p.x) ? juce::jlimit (0.0f, 1.0f, p.x) : 0.0f;
+            p.y = std::isfinite (p.y) ? juce::jlimit (-1.0f, 1.0f, p.y) : 0.0f;
+            p.curve = std::isfinite (p.curve) ? juce::jlimit (-1.0f, 1.0f, p.curve) : 0.0f;
+        }
+        std::stable_sort (points.begin(), points.end(), [] (const LfoPoint& a, const LfoPoint& b) { return a.x < b.x; });
+        if (points.size() > (size_t) maxPoints)
+            points.resize ((size_t) maxPoints);
+        if (points.empty())
+            points = { { 0.0f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f } };
+        if (points.front().x > 0.0f)
+            points.insert (points.begin(), { 0.0f, points.front().y, 0.0f });
+        if (points.back().x < 1.0f)
+            points.push_back ({ 1.0f, points.back().y, 0.0f });
+
+        for (int i = 0; i <= size; ++i)
+            table[(size_t) i] = valueAt ((float) i / (float) size);
+    }
+
+    const std::vector<LfoPoint>& getPoints() const noexcept { return points; }
+
+    /** The shape at a phase of 0..1, from the table. */
+    float at (float phase) const noexcept
+    {
+        const float position = juce::jlimit (0.0f, 1.0f, phase) * (float) size;
+        const int whole = juce::jmin (size - 1, (int) position);
+        return table[(size_t) whole] + (table[(size_t) whole + 1] - table[(size_t) whole]) * (position - (float) whole);
+    }
+
+    /** The bend of a segment: `t` is 0..1 along it. */
+    static float bend (float t, float curve) noexcept
+    {
+        if (std::abs (curve) < 1.0e-3f)
+            return t;
+        return curve > 0.0f ? std::pow (t, 1.0f + 4.0f * curve) : 1.0f - std::pow (1.0f - t, 1.0f - 4.0f * curve);
+    }
+
+    juce::String toString() const
+    {
+        juce::StringArray parts;
+        for (const auto& p : points)
+            parts.add (juce::String (p.x, 5) + "," + juce::String (p.y, 5) + "," + juce::String (p.curve, 4));
+        return parts.joinIntoString (";");
+    }
+
+    static std::vector<LfoPoint> pointsFromString (const juce::String& text)
+    {
+        std::vector<LfoPoint> result;
+        for (const auto& part : juce::StringArray::fromTokens (text, ";", ""))
+        {
+            const auto numbers = juce::StringArray::fromTokens (part, ",", "");
+            if (numbers.size() == 3)
+                result.push_back ({ numbers[0].getFloatValue(), numbers[1].getFloatValue(), numbers[2].getFloatValue() });
+        }
+        return result;
+    }
+
+private:
+    float valueAt (float x) const noexcept
+    {
+        // The last segment that starts at or before x; two points at the same x make a step.
+        size_t i = 0;
+        while (i + 2 < points.size() && points[i + 1].x <= x)
+            ++i;
+
+        const auto& a = points[i];
+        const auto& b = points[i + 1];
+        const float width = b.x - a.x;
+        if (width < 1.0e-6f)
+            return b.y;
+        return a.y + (b.y - a.y) * bend (juce::jlimit (0.0f, 1.0f, (x - a.x) / width), a.curve);
+    }
+
+    std::vector<LfoPoint> points;
+    std::array<float, size + 1> table {};
+};
 
 struct LfoDivision
 {
@@ -168,6 +320,8 @@ struct LfoParams
     float rateHz = 2.0f;  // used when not synced
     bool sync = false;
     int division = 5;     // index into getLfoDivisions()
+    int mode = lfoMode::free;
+    const LfoShape* custom = nullptr; // the drawn shape, used when shape is Custom; not owned
 };
 
 struct ModSlot
@@ -188,6 +342,16 @@ public:
         cycle = 0;
     }
 
+    /** A note started: the retriggered modes begin their cycle again. */
+    void noteStarted (const LfoParams& p) noexcept
+    {
+        if (p.mode != lfoMode::free)
+            reset();
+    }
+
+    /** Where the LFO is in its cycle, 0..1, for the display. */
+    float getPhase() const noexcept { return (float) phase; }
+
     /** Returns the value at the current position, then moves on by `numSamples`.
         `ppq` is the host position at this point; it is followed while the host plays. */
     float next (int numSamples, double sampleRate, const LfoParams& p, const TransportInfo& transport, double ppq) noexcept
@@ -195,7 +359,7 @@ public:
         const auto& division = getLfoDivisions()[(size_t) juce::jlimit (0, (int) getLfoDivisions().size() - 1, p.division)];
         const double hz = p.sync ? transport.bpm / 60.0 / division.beats : (double) p.rateHz;
 
-        if (p.sync && transport.playing)
+        if (p.sync && transport.playing && p.mode == lfoMode::free)
         {
             const double cycles = ppq / division.beats;
             const double whole = std::floor (cycles);
@@ -203,24 +367,35 @@ public:
             cycle = (juce::int64) whole;
         }
 
-        const float value = shapeAt (p.shape);
+        const float value = shapeAt (p);
 
         phase += hz * (double) numSamples / sampleRate;
-        while (phase >= 1.0)
+        if (p.mode == lfoMode::oneShot)
         {
-            phase -= 1.0;
-            ++cycle;
+            // Stays at the end of its cycle until the next note.
+            phase = juce::jmin (phase, 1.0);
+        }
+        else
+        {
+            while (phase >= 1.0)
+            {
+                phase -= 1.0;
+                ++cycle;
+            }
         }
 
         return value;
     }
 
 private:
-    float shapeAt (int shape) const noexcept
+    float shapeAt (const LfoParams& p) const noexcept
     {
         const auto ph = (float) phase;
 
-        switch (shape)
+        if (p.shape == lfoShapeCustom)
+            return p.custom != nullptr ? p.custom->at (ph) : 0.0f;
+
+        switch (p.shape)
         {
             case 1:  return ph < 0.5f ? 4.0f * ph - 1.0f : 3.0f - 4.0f * ph;
             case 2:  return 1.0f - 2.0f * ph;

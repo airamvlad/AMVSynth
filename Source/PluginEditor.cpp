@@ -351,23 +351,57 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         updateSampleInfo();
     }
 
-    // MOD page: two LFOs, four macros and the modulation matrix.
+    // MOD page: four LFOs with a shape editor, a free envelope, the modulation matrix and the macros.
     buildingPage = 2;
-    for (int i = 0; i < mod::numLfos; ++i)
     {
-        auto& s = addSection ("LFO " + juce::String (i + 1), false, 0, 4.0f);
-        s.columnWidth = 130;
-        lfoDisplays[(size_t) i].source = mod::srcLfo1 + i;
-        s.display = &lfoDisplays[(size_t) i];
-        s.displayShare = 0.56f;
-        addChildComponent (lfoDisplays[(size_t) i]);
-        s.column.push_back (&makeChoice (id::lfo (i, "Shape"), false)->box);
-        s.column.push_back (&makeToggle (id::lfo (i, "Sync"), "TEMPO SYNC", false)->button);
-        s.column.push_back (&makeChoice (id::lfo (i, "Division"), false)->box);
-        s.knobs = makeKnobs (false, { { id::lfo (i, "Rate"), "RATE" } });
+        lfoSection = sections.size();
+        auto& s = addSection ("LFO", false, 0, 6.2f);
+        s.columnWidth = 92;
+        s.columnsInColumn = 2;
+        s.display = &lfoDisplay;
+        s.displayShare = 0.8f;
+        lfoDisplay.owner = this;
+        addChildComponent (lfoDisplay);
+
+        for (int i = 0; i < mod::numLfos; ++i)
+        {
+            auto& button = lfoSelect[(size_t) i];
+            button.setButtonText ("LFO " + juce::String (i + 1));
+            button.setTooltip ("Show the settings of this LFO.");
+            button.setColour (juce::TextButton::buttonColourId, colour::knob);
+            button.setColour (juce::TextButton::buttonOnColourId, colour::forSource (mod::lfoSource (i)).withAlpha (0.55f));
+            button.setColour (juce::TextButton::textColourOffId, colour::dimText);
+            button.setColour (juce::TextButton::textColourOnId, colour::text);
+            button.onClick = [this, i] { showLfo (i); };
+            addChildComponent (button);
+
+            auto& column = lfoColumns[(size_t) i];
+            for (auto& select : lfoSelect)
+                column.push_back (&select);
+            column.push_back (&makeChoice (id::lfo (i, "Shape"), false)->box);
+            column.push_back (&makeChoice (id::lfo (i, "Mode"), false)->box);
+            column.push_back (&makeToggle (id::lfo (i, "Sync"), "SYNC", false)->button);
+            column.push_back (&makeChoice (id::lfo (i, "Division"), false)->box);
+            lfoKnobs[(size_t) i] = makeKnobs (false, { { id::lfo (i, "Rate"), "RATE" } });
+        }
+        showLfo (0);
     }
-    addSection ("MACROS", false, 0, 4.4f).knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" },
+    {
+        auto& s = addSection ("ENV 3", false, 0, 3.8f);
+        env3Display.setParameters (processor.apvts, id::env3A, id::env3D, id::env3S, id::env3R);
+        s.display = &env3Display;
+        s.displayShare = 0.4f;
+        s.knobs = makeKnobs (false, { { id::env3A, "A" }, { id::env3D, "D" }, { id::env3S, "S" }, { id::env3R, "R" } });
+        addChildComponent (env3Display);
+    }
+    addSection ("MACROS", false, 3, 4.0f).knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" },
                                                                       { id::macro (2), "MACRO 3" }, { id::macro (3), "MACRO 4" } });
+    lfoHelp.lines = { "Set an LFO to Custom to draw it: drag points, double-click to add or remove one.",
+                      "The small handle between two points bends the line. Hold Alt to move without the grid.",
+                      "Right-click the LFO for shapes to start from, such as stairs or a sidechain pump.",
+                      "Retrigger starts the LFO with every note; One Shot runs it once, like an envelope." };
+    addSection ("LFO EDITOR", false, 3, 6.0f).display = &lfoHelp;
+    addChildComponent (lfoHelp);
     for (int i = 0; i < mod::numSlots; ++i)
     {
         auto& s = addSection ("MOD " + juce::String (i + 1), false, 1 + i / 4, 1.0f);
@@ -635,6 +669,8 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
     for (auto& button : importButtons)
         button.setVisible (false);
     for (auto& button : sampleButtons)
+        button.setVisible (false);
+    for (auto& button : lfoSelect)
         button.setVisible (false);
     for (auto& s : sections)
         if (s.display != nullptr)
@@ -1030,12 +1066,17 @@ void AMVSynthAudioProcessorEditor::EnvelopeDisplay::mouseDoubleClick (const juce
 namespace
 {
 const char* const sourceTag = "mod:";
-const char* const chipNames[amv::mod::numSources] { "", "LFO 1", "LFO 2", "ENV", "VEL", "WHEEL", "M1", "M2", "M3", "M4", "PRESS", "TIMBRE" };
+const char* const chipNames[amv::mod::numSources] { "", "LFO 1", "LFO 2", "F.ENV", "VEL", "WHEEL", "M1", "M2", "M3", "M4", "PRESS", "TIMBRE", "LFO 3", "LFO 4", "ENV 3" };
+
+/** The order of the chips in the source bar: modulators first, then what the player does. */
+constexpr int chipOrder[amv::mod::numSources - 1] { amv::mod::srcLfo1, amv::mod::srcLfo2, amv::mod::srcLfo3, amv::mod::srcLfo4, amv::mod::srcFilterEnv,
+                                                    amv::mod::srcEnv3, amv::mod::srcVelocity, amv::mod::srcModWheel, amv::mod::srcMacro1,
+                                                    amv::mod::srcMacro2, amv::mod::srcMacro3, amv::mod::srcMacro4, amv::mod::srcPressure, amv::mod::srcTimbre };
 
 /** LFOs and timbre swing both ways around the value of the knob; the others only add. */
 bool isBipolar (int source)
 {
-    return source == amv::mod::srcLfo1 || source == amv::mod::srcLfo2 || source == amv::mod::srcTimbre;
+    return amv::mod::isBipolarSource (source);
 }
 
 void setParameter (juce::RangedAudioParameter* param, float realValue)
@@ -1066,6 +1107,10 @@ float AMVSynthAudioProcessorEditor::ModKnob::proportionWith (float x) const
         const float db = gain < 1.0e-4f ? range.start : param->convertFrom0to1 (base) + juce::Decibels::gainToDecibels (gain);
         return param->convertTo0to1 (juce::jlimit (range.start, range.end, db));
     }
+
+    // Envelope times and the delay tone move by octaves.
+    if ((dest >= amv::mod::dstAmpAttack && dest <= amv::mod::dstFltRelease) || dest == amv::mod::dstDelayTone)
+        return param->convertTo0to1 (juce::jlimit (range.start, range.end, param->convertFrom0to1 (base) * std::exp2 (x * amv::mod::timeOctaves)));
 
     return juce::jlimit (0.0f, 1.0f, base + x);
 }
@@ -1478,19 +1523,8 @@ void AMVSynthAudioProcessorEditor::updateModulationDisplay()
             sourceBar.repaint();
     }
 
-    for (size_t i = 0; i < lfoDisplays.size(); ++i)
-    {
-        auto& display = lfoDisplays[i];
-        const int shape = juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::lfo ((int) i, "Shape"))->load());
-        const float value = values[(size_t) display.source];
-        if (shape != display.shape || std::abs (value - display.value) > 0.004f)
-        {
-            display.shape = shape;
-            display.value = value;
-            if (display.isVisible())
-                display.repaint();
-        }
-    }
+    lfoDisplay.refresh();
+    env3Display.refresh();
 
     // Collect the modulations once, then hand each knob its own.
     std::array<std::vector<Assignment>, amv::mod::numDests> byDest;
@@ -1532,7 +1566,11 @@ juce::Rectangle<float> AMVSynthAudioProcessorEditor::ModSourceBar::chipBounds (i
 {
     const auto area = getLocalBounds().toFloat().withTrimmedLeft (96.0f);
     const float width = area.getWidth() / (float) (amv::mod::numSources - 1);
-    return juce::Rectangle<float> (area.getX() + width * (float) (source - 1), area.getY(), width, area.getHeight()).reduced (2.5f, 2.0f);
+    int place = 0;
+    for (int i = 0; i < amv::mod::numSources - 1; ++i)
+        if (chipOrder[i] == source)
+            place = i;
+    return juce::Rectangle<float> (area.getX() + width * (float) place, area.getY(), width, area.getHeight()).reduced (2.0f, 2.0f);
 }
 
 int AMVSynthAudioProcessorEditor::ModSourceBar::chipAt (juce::Point<float> position) const
@@ -1619,51 +1657,394 @@ void AMVSynthAudioProcessorEditor::ModSourceBar::mouseDrag (const juce::MouseEve
     pressed = 0;
 }
 
+void AMVSynthAudioProcessorEditor::showLfo (int index)
+{
+    index = juce::jlimit (0, amv::mod::numLfos - 1, index);
+    for (int i = 0; i < amv::mod::numLfos; ++i)
+        lfoSelect[(size_t) i].setToggleState (i == index, juce::dontSendNotification);
+
+    lfoDisplay.lfo = index;
+    auto& s = sections[lfoSection];
+    s.title = "LFO " + juce::String (index + 1);
+    s.column = lfoColumns[(size_t) index];
+    s.knobs = lfoKnobs[(size_t) index];
+    layoutSection (s);
+    updateVisibility();
+    lfoDisplay.refresh();
+    repaint();
+}
+
+juce::Rectangle<float> AMVSynthAudioProcessorEditor::LfoDisplay::graph() const
+{
+    return getLocalBounds().toFloat().reduced (10.0f, 10.0f);
+}
+
+juce::Point<float> AMVSynthAudioProcessorEditor::LfoDisplay::toScreen (float x, float y) const
+{
+    const auto area = graph();
+    return { area.getX() + x * area.getWidth(), area.getCentreY() - y * area.getHeight() * 0.5f };
+}
+
+juce::Point<float> AMVSynthAudioProcessorEditor::LfoDisplay::handleFor (size_t segment) const
+{
+    const auto& a = points[segment];
+    const auto& b = points[segment + 1];
+    return toScreen (0.5f * (a.x + b.x), a.y + (b.y - a.y) * amv::LfoShape::bend (0.5f, a.curve));
+}
+
+int AMVSynthAudioProcessorEditor::LfoDisplay::pointAt (juce::Point<float> p) const
+{
+    int best = -1;
+    float bestDistance = 9.0f;
+    for (size_t i = 0; i < points.size(); ++i)
+    {
+        const float distance = p.getDistanceFrom (toScreen (points[i].x, points[i].y));
+        if (distance < bestDistance)
+        {
+            bestDistance = distance;
+            best = (int) i;
+        }
+    }
+    return best;
+}
+
+int AMVSynthAudioProcessorEditor::LfoDisplay::handleAt (juce::Point<float> p) const
+{
+    for (size_t i = 0; i + 1 < points.size(); ++i)
+        if (points[i + 1].x - points[i].x > 0.02f && std::abs (points[i + 1].y - points[i].y) > 0.02f && p.getDistanceFrom (handleFor (i)) < 7.0f)
+            return (int) i;
+    return -1;
+}
+
+float AMVSynthAudioProcessorEditor::LfoDisplay::valueAt (float ph) const
+{
+    static const float steps[6] { 0.5f, -0.7f, 0.9f, -0.2f, 0.35f, -0.9f };
+
+    switch (shape)
+    {
+        case 1:  return ph < 0.5f ? 4.0f * ph - 1.0f : 3.0f - 4.0f * ph;
+        case 2:  return 1.0f - 2.0f * ph;
+        case 3:  return ph < 0.5f ? 1.0f : -1.0f;
+        case 4:  return steps[juce::jmin (5, (int) (ph * 6.0f))]; // random is drawn as steps
+        case amv::lfoShapeCustom: break;
+        default: return std::sin (ph * juce::MathConstants<float>::twoPi);
+    }
+
+    size_t i = 0;
+    while (i + 2 < points.size() && points[i + 1].x <= ph)
+        ++i;
+    if (points.size() < 2)
+        return 0.0f;
+    const auto& a = points[i];
+    const auto& b = points[i + 1];
+    const float width = b.x - a.x;
+    return width < 1.0e-6f ? b.y : a.y + (b.y - a.y) * amv::LfoShape::bend (juce::jlimit (0.0f, 1.0f, (ph - a.x) / width), a.curve);
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::refresh()
+{
+    if (owner == nullptr)
+        return;
+
+    auto& processor = owner->processor;
+    const auto raw = [&] (const char* suffix) { return juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::lfo (lfo, suffix))->load()); };
+    const int newShape = raw ("Shape"), newMode = raw ("Mode");
+    const float newPhase = processor.lfoPhases[(size_t) lfo].load (std::memory_order_relaxed);
+    bool changed = newShape != shape || newMode != mode || lfo != shownLfo || std::abs (newPhase - phase) > 0.002f;
+
+    // The points come from the processor, except while one is being dragged here.
+    const auto& stored = processor.getLfoPoints (lfo);
+    if (dragPoint < 0 && dragHandle < 0 && (&stored != pointsFrom || lfo != shownLfo))
+    {
+        points = stored;
+        pointsFrom = &stored;
+        changed = true;
+    }
+
+    shape = newShape;
+    mode = newMode;
+    phase = newPhase;
+    shownLfo = lfo;
+
+    if (changed && isVisible())
+        repaint();
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::setPoints (std::vector<amv::LfoPoint> newPoints, bool finished)
+{
+    auto& processor = owner->processor;
+    processor.setLfoShape (lfo, std::move (newPoints), finished);
+    points = processor.getLfoPoints (lfo);
+    pointsFrom = &processor.getLfoPoints (lfo);
+
+    if (shape != amv::lfoShapeCustom)
+        if (auto* param = processor.apvts.getParameter (amv::id::lfo (lfo, "Shape")))
+        {
+            param->setValueNotifyingHost (param->convertTo0to1 ((float) amv::lfoShapeCustom));
+            shape = amv::lfoShapeCustom;
+        }
+
+    repaint();
+}
+
 void AMVSynthAudioProcessorEditor::LfoDisplay::paint (juce::Graphics& g)
 {
     using namespace amv;
-    auto area = getLocalBounds().toFloat();
     g.setColour (colour::background);
-    g.fillRoundedRectangle (area, 6.0f);
-    area.reduce (8.0f, 9.0f);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
 
-    const auto tint = colour::forSource (source);
-    const float mid = area.getCentreY(), half = area.getHeight() * 0.5f;
-    g.setColour (colour::track);
-    g.fillRect (area.getX(), mid - 0.5f, area.getWidth(), 1.0f);
+    const auto area = graph();
+    const auto tint = colour::forSource (mod::lfoSource (lfo));
+    const bool custom = shape == lfoShapeCustom;
 
-    // One cycle of the shape. Random is drawn as steps.
-    static const float steps[6] { 0.5f, -0.7f, 0.9f, -0.2f, 0.35f, -0.9f };
-    const auto at = [this] (float ph)
+    // A grid of sixteen steps, with the quarters a little brighter.
+    for (int i = 0; i <= 16; ++i)
     {
-        switch (shape)
-        {
-            case 1:  return ph < 0.5f ? 4.0f * ph - 1.0f : 3.0f - 4.0f * ph;
-            case 2:  return 1.0f - 2.0f * ph;
-            case 3:  return ph < 0.5f ? 1.0f : -1.0f;
-            case 4:  return steps[juce::jmin (5, (int) (ph * 6.0f))];
-            default: return std::sin (ph * juce::MathConstants<float>::twoPi);
-        }
-    };
+        g.setColour (colour::track.withAlpha (i % 4 == 0 ? 0.9f : 0.35f));
+        g.fillRect (area.getX() + area.getWidth() * (float) i / 16.0f - 0.5f, area.getY(), 1.0f, area.getHeight());
+    }
+    g.setColour (colour::track);
+    g.fillRect (area.getX(), area.getCentreY() - 0.5f, area.getWidth(), 1.0f);
 
     juce::Path path;
-    const int points = juce::jmax (2, (int) area.getWidth());
-    for (int i = 0; i < points; ++i)
+    const int count = juce::jmax (2, (int) area.getWidth());
+    for (int i = 0; i <= count; ++i)
     {
-        const float x = area.getX() + (float) i, y = mid - at ((float) i / (float) (points - 1)) * half;
+        const float ph = (float) i / (float) count;
+        const auto p = toScreen (ph, valueAt (juce::jmin (ph, 0.99999f)));
         if (i == 0)
-            path.startNewSubPath (x, y);
+            path.startNewSubPath (p);
         else
-            path.lineTo (x, y);
+            path.lineTo (p);
     }
-    g.setColour (tint.withAlpha (0.85f));
-    g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
 
-    // The line follows the value of the LFO as it runs.
-    const float y = mid - juce::jlimit (-1.0f, 1.0f, value) * half;
-    g.setColour (colour::text.withAlpha (0.8f));
-    g.fillRect (area.getX(), y - 0.75f, area.getWidth(), 1.5f);
-    g.fillEllipse (area.getRight() - 4.0f, y - 3.0f, 6.0f, 6.0f);
+    auto fill = path;
+    fill.lineTo (area.getRight(), area.getCentreY());
+    fill.lineTo (area.getX(), area.getCentreY());
+    fill.closeSubPath();
+    g.setColour (tint.withAlpha (0.12f));
+    g.fillPath (fill);
+    g.setColour (tint.withAlpha (0.9f));
+    g.strokePath (path, juce::PathStrokeType (1.7f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+
+    if (custom)
+    {
+        for (size_t i = 0; i + 1 < points.size(); ++i)
+            if (points[i + 1].x - points[i].x > 0.02f && std::abs (points[i + 1].y - points[i].y) > 0.02f)
+            {
+                const auto h = handleFor (i);
+                const bool lit = hoverHandle == (int) i || dragHandle == (int) i;
+                g.setColour (colour::background);
+                g.fillEllipse (h.x - 3.5f, h.y - 3.5f, 7.0f, 7.0f);
+                g.setColour (tint.withAlpha (lit ? 1.0f : 0.6f));
+                g.drawEllipse (h.x - 3.5f, h.y - 3.5f, 7.0f, 7.0f, 1.3f);
+            }
+
+        for (size_t i = 0; i < points.size(); ++i)
+        {
+            const auto p = toScreen (points[i].x, points[i].y);
+            const bool lit = hoverPoint == (int) i || dragPoint == (int) i;
+            const float r = lit ? 5.5f : 4.5f;
+            g.setColour (lit ? colour::text : tint);
+            g.fillEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r);
+            g.setColour (colour::background);
+            g.drawEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r, 1.2f);
+        }
+    }
+
+    // Where the LFO is now.
+    const float ph = juce::jlimit (0.0f, 1.0f, phase);
+    const auto now = toScreen (ph, shape == 4 ? 0.0f : valueAt (juce::jmin (ph, 0.99999f)));
+    g.setColour (colour::text.withAlpha (0.45f));
+    g.fillRect (now.x - 0.5f, area.getY(), 1.0f, area.getHeight());
+    if (shape != 4)
+    {
+        g.setColour (colour::text);
+        g.fillEllipse (now.x - 3.0f, now.y - 3.0f, 6.0f, 6.0f);
+    }
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    const int point = shape == amv::lfoShapeCustom ? pointAt (e.position) : -1;
+    const int handle = shape == amv::lfoShapeCustom && point < 0 ? handleAt (e.position) : -1;
+    if (point != hoverPoint || handle != hoverHandle)
+    {
+        hoverPoint = point;
+        hoverHandle = handle;
+        setMouseCursor (point >= 0 ? juce::MouseCursor::DraggingHandCursor
+                                   : handle >= 0 ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::mouseExit (const juce::MouseEvent&)
+{
+    hoverPoint = hoverHandle = -1;
+    repaint();
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        showMenu();
+        return;
+    }
+
+    if (shape != amv::lfoShapeCustom)
+        return;
+
+    dragPoint = pointAt (e.position);
+    dragHandle = dragPoint < 0 ? handleAt (e.position) : -1;
+    if (dragHandle >= 0)
+        curveStart = points[(size_t) dragHandle].curve;
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::mouseDrag (const juce::MouseEvent& e)
+{
+    const auto area = graph();
+
+    if (dragPoint >= 0 && dragPoint < (int) points.size())
+    {
+        const auto index = (size_t) dragPoint;
+        float x = (e.position.x - area.getX()) / juce::jmax (1.0f, area.getWidth());
+        float y = (area.getCentreY() - e.position.y) / juce::jmax (1.0f, area.getHeight() * 0.5f);
+
+        // On the grid unless Alt is held: sixteen steps across, eight up and down.
+        if (! e.mods.isAltDown())
+        {
+            x = std::round (x * 16.0f) / 16.0f;
+            y = std::round (y * 8.0f) / 8.0f;
+        }
+
+        // The first and last point stay at the ends; the others stay between their neighbours.
+        if (index == 0)
+            x = 0.0f;
+        else if (index + 1 == points.size())
+            x = 1.0f;
+        else
+            x = juce::jlimit (points[index - 1].x, points[index + 1].x, x);
+
+        auto edited = points;
+        edited[index].x = x;
+        edited[index].y = juce::jlimit (-1.0f, 1.0f, y);
+        owner->processor.setLfoShape (lfo, edited, false);
+        points = edited;
+        repaint();
+    }
+    else if (dragHandle >= 0 && dragHandle + 1 < (int) points.size())
+    {
+        const auto index = (size_t) dragHandle;
+        const float rising = points[index + 1].y > points[index].y ? 1.0f : -1.0f;
+        const float moved = (float) -e.getDistanceFromDragStartY() / juce::jmax (1.0f, area.getHeight() * 0.5f);
+        auto edited = points;
+        edited[index].curve = juce::jlimit (-1.0f, 1.0f, curveStart - moved * rising * 1.5f);
+        owner->processor.setLfoShape (lfo, edited, false);
+        points = edited;
+        repaint();
+    }
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::mouseUp (const juce::MouseEvent&)
+{
+    if (dragPoint >= 0 || dragHandle >= 0)
+    {
+        dragPoint = dragHandle = -1;
+        setPoints (points, true);
+    }
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (shape != amv::lfoShapeCustom)
+        return;
+
+    auto edited = points;
+    const int point = pointAt (e.position);
+
+    if (point > 0 && point + 1 < (int) edited.size())
+    {
+        edited.erase (edited.begin() + point);
+    }
+    else if (point < 0 && edited.size() < (size_t) amv::LfoShape::maxPoints)
+    {
+        const auto area = graph();
+        float x = juce::jlimit (0.0f, 1.0f, (e.position.x - area.getX()) / juce::jmax (1.0f, area.getWidth()));
+        float y = juce::jlimit (-1.0f, 1.0f, (area.getCentreY() - e.position.y) / juce::jmax (1.0f, area.getHeight() * 0.5f));
+        if (! e.mods.isAltDown())
+        {
+            x = std::round (x * 16.0f) / 16.0f;
+            y = std::round (y * 8.0f) / 8.0f;
+        }
+        edited.push_back ({ x, y, 0.0f });
+    }
+    else
+    {
+        return;
+    }
+
+    hoverPoint = hoverHandle = -1;
+    setPoints (std::move (edited), true);
+}
+
+void AMVSynthAudioProcessorEditor::LfoDisplay::showMenu()
+{
+    using Points = std::vector<amv::LfoPoint>;
+    const auto stairs = [] (int count, bool up)
+    {
+        Points result;
+        for (int i = 0; i < count; ++i)
+        {
+            const float level = (float) i / (float) (count - 1) * 2.0f - 1.0f;
+            const float y = up ? level : -level;
+            result.push_back ({ (float) i / (float) count, y, 0.0f });
+            result.push_back ({ (float) (i + 1) / (float) count, y, 0.0f });
+        }
+        return result;
+    };
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Draw a custom shape from");
+    const char* names[] { "Triangle", "Ramp up", "Ramp down", "Square", "Stairs up, 4 steps", "Stairs down, 8 steps", "Sidechain pump",
+                          "Pluck", "Random, 8 steps", "Random, 16 steps" };
+    for (int i = 0; i < (int) std::size (names); ++i)
+        menu.addItem (i + 1, names[i]);
+
+    juce::Component::SafePointer<LfoDisplay> safe (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                        [safe, stairs] (int result)
+                        {
+                            if (safe == nullptr || result <= 0)
+                                return;
+
+                            Points made;
+                            switch (result)
+                            {
+                                case 1:  made = { { 0.0f, -1.0f, 0.0f }, { 0.5f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f } }; break;
+                                case 2:  made = { { 0.0f, -1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f } }; break;
+                                case 3:  made = { { 0.0f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f } }; break;
+                                case 4:  made = { { 0.0f, 1.0f, 0.0f }, { 0.5f, 1.0f, 0.0f }, { 0.5f, -1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f } }; break;
+                                case 5:  made = stairs (4, true); break;
+                                case 6:  made = stairs (8, false); break;
+                                case 7:  made = { { 0.0f, -1.0f, -0.7f }, { 0.75f, 1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f } }; break;
+                                case 8:  made = { { 0.0f, 1.0f, -0.8f }, { 1.0f, -1.0f, 0.0f } }; break;
+                                default:
+                                {
+                                    const int count = result == 9 ? 8 : 16;
+                                    juce::Random random;
+                                    for (int i = 0; i < count; ++i)
+                                    {
+                                        const float y = std::round ((random.nextFloat() * 2.0f - 1.0f) * 8.0f) / 8.0f;
+                                        made.push_back ({ (float) i / (float) count, y, 0.0f });
+                                        made.push_back ({ (float) (i + 1) / (float) count, y, 0.0f });
+                                    }
+                                    break;
+                                }
+                            }
+
+                            safe->setPoints (std::move (made), true);
+                        });
 }
 
 void AMVSynthAudioProcessorEditor::TextDisplay::paint (juce::Graphics& g)
@@ -1860,7 +2241,7 @@ void AMVSynthAudioProcessorEditor::resized()
     {
         auto bar = area.removeFromTop (sourceBarHeight);
         area.removeFromTop (gap - 2);
-        statusLabel.setBounds (bar.removeFromRight (230));
+        statusLabel.setBounds (bar.removeFromRight (190));
         sourceBar.setBounds (bar);
     }
 

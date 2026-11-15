@@ -1010,6 +1010,87 @@ int main()
             check (changes, "every warp mode changes the wave");
         }
 
+        // Drawn LFOs, the extra LFOs and envelope, and the destinations added with them.
+        {
+            const LfoShape ramp ({ { 1.0f, 0.5f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 0.5f, 0.0f, 0.0f } }); // given out of order
+            check (ramp.getPoints().size() == 3 && near (ramp.at (0.0f), -1.0f) && near (ramp.at (0.25f), -0.5f, 0.01f) && near (ramp.at (0.5f), 0.0f, 0.01f)
+                       && near (ramp.at (0.75f), 0.25f, 0.01f) && near (ramp.at (1.0f), 0.5f),
+                   "a drawn LFO shape runs through its points in order");
+
+            const LfoShape step ({ { 0.0f, 1.0f, 0.0f }, { 0.5f, 1.0f, 0.0f }, { 0.5f, -1.0f, 0.0f }, { 1.0f, -1.0f, 0.0f } });
+            check (near (step.at (0.4f), 1.0f) && near (step.at (0.6f), -1.0f), "two points at the same place make a step");
+
+            const LfoShape bent ({ { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 0.0f } });
+            const LfoShape again (LfoShape::pointsFromString (bent.toString()));
+            const LfoShape empty (LfoShape::pointsFromString ("nonsense"));
+            check (bent.at (0.5f) < 0.1f && near (again.at (0.5f), bent.at (0.5f), 1.0e-4f) && again.getPoints().size() == 2
+                       && empty.getPoints().size() == 2 && near (empty.at (0.0f), 1.0f) && near (empty.at (1.0f), -1.0f),
+                   "a curve bends a segment, and a shape survives being written as text");
+
+            const LfoShape quarter ({ { 0.0f, 0.25f, 0.0f }, { 1.0f, 0.25f, 0.0f } });
+            const LfoShape rise ({ { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.25f, 0.0f } });
+
+            auto p = open;
+            p.lfos[0] = { lfoShapeCustom, 3.0f, false, 0, lfoMode::free, &quarter };
+            p.slots[0] = { mod::srcLfo1, mod::dstOscAPitch, 1.0f };
+            check (near (play (p, 1, {}).hz, 440.0f, 0.1f), "a drawn LFO modulates like the built-in shapes");
+
+            p.lfos[0] = {};
+            p.lfos[3] = { lfoShapeCustom, 3.0f, false, 0, lfoMode::free, &quarter };
+            p.slots[0] = { mod::srcLfo4, mod::dstOscAPitch, 1.0f };
+            check (near (play (p, 1, {}).hz, 440.0f, 0.1f), "LFO 4 is a modulation source");
+
+            p.lfos[3] = { lfoShapeCustom, 20.0f, false, 0, lfoMode::oneShot, &rise };
+            check (near (play (p, 1, {}).hz, 440.0f, 0.1f), "a one shot LFO runs once and stays at its end");
+
+            p.lfos[3] = {};
+            p.env3 = { 0.001f, 0.05f, 0.25f, 0.1f };
+            p.slots[0] = { mod::srcEnv3, mod::dstOscAPitch, 1.0f };
+            check (near (play (p, 1, {}).hz, 440.0f, 0.1f), "the third envelope is a modulation source");
+
+            Lfo lfo;
+            LfoParams lp;
+            lp.rateHz = 1.0f;
+            for (int i = 0; i < 10; ++i)
+                lfo.next (4800, 48000.0, lp, {}, 0.0);
+            const float running = lfo.getPhase();
+            lfo.noteStarted (lp);
+            const bool freeKeeps = near (lfo.getPhase(), running) && running > 0.5f;
+            lp.mode = lfoMode::retrigger;
+            lfo.noteStarted (lp);
+            check (freeKeeps && near (lfo.getPhase(), 0.0f), "a retriggered LFO starts again with a note, a free one runs on");
+
+            // Envelope times
+            EngineParams slow;
+            slow.amp.release = 6.0f;
+            const auto ringing = render (slow);
+            slow.modMacros[0] = 1.0f;
+            slow.slots[0] = { mod::srcMacro1, mod::dstAmpRelease, -1.0f };
+            const auto cut = render (slow);
+            check (ringing.tailPeak > 0.01f && cut.tailPeak < 1.0e-4f && cut.finite, "modulation shortens the release of the amp envelope");
+
+            // Effects are modulated from the shared sources.
+            SynthEngine engine;
+            engine.prepare (48000.0, 512);
+            EngineParams fxp;
+            fxp.modMacros[1] = 0.5f;
+            fxp.slots[0] = { mod::srcMacro2, mod::dstDelayMix, 0.8f };
+            fxp.slots[1] = { mod::srcMacro2, mod::dstCutoff, 1.0f };
+            engine.setParams (fxp);
+            juce::AudioBuffer<float> buffer (2, 512);
+            buffer.clear();
+            engine.process (buffer, {});
+            check (near (engine.getGlobalModulation (mod::dstDelayMix), 0.4f) && near (engine.getGlobalModulation (mod::dstReverbMix), 0.0f)
+                       && mod::isGlobalDest (mod::dstDistDrive) && ! mod::isGlobalDest (mod::dstCutoff) && ! mod::isGlobalDest (mod::dstFltRelease),
+                   "the engine works out the modulation of the effects");
+            check (modDestFor (id::ampA) == mod::dstAmpAttack && modDestFor (id::fltR) == mod::dstFltRelease && modDestFor (id::delayMix) == mod::dstDelayMix
+                       && modDestFor (id::distDrive) == mod::dstDistDrive && modDestFor (id::reverbSize) == mod::dstReverbSize,
+                   "envelope and effect knobs are modulation destinations");
+            check (mod::lfoSource (0) == mod::srcLfo1 && mod::lfoSource (1) == mod::srcLfo2 && mod::lfoSource (2) == mod::srcLfo3 && mod::lfoSource (3) == mod::srcLfo4
+                       && (int) mod::srcTimbre == 11 && (int) mod::dstGrainScan == 30,
+                   "sources and destinations saved in older projects keep their numbers");
+        }
+
         // Sampler
         {
             const double rate = 44100.0;

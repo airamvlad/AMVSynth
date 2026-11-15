@@ -57,6 +57,17 @@ public:
     /** The imported wavetable of an oscillator, or null. Message thread only. */
     const amv::UserWavetable* getUserWavetable (int osc) const noexcept { return activeUserWave[(size_t) osc].load(); }
 
+    /** Sets the drawn shape of an LFO (0 to 3), used when its shape is Custom. With `save` off the
+        project state is not updated yet; call it again with `save` on when the edit is finished.
+        Message thread only. */
+    void setLfoShape (int lfo, std::vector<amv::LfoPoint> points, bool save);
+
+    /** The points of the drawn shape of an LFO. Message thread only. */
+    const std::vector<amv::LfoPoint>& getLfoPoints (int lfo) const noexcept { return activeLfoShape[(size_t) lfo].load()->getPoints(); }
+
+    /** Where each LFO is in its cycle, 0..1, for the display. */
+    std::array<std::atomic<float>, amv::mod::numLfos> lfoPhases {};
+
     /** Loads an audio file into the sampler; at most the first 60 seconds are used. Message thread only. */
     bool loadSample (const juce::File&);
 
@@ -117,8 +128,18 @@ private:
     };
     std::vector<StoredSample> sampleStore;
 
+    // Drawn LFO shapes, handed over like the wavetables. There is always one per LFO.
+    void restoreLfoShapes();
+    std::array<std::atomic<const amv::LfoShape*>, amv::mod::numLfos> activeLfoShape {};
+    struct StoredShape
+    {
+        std::unique_ptr<amv::LfoShape> shape;
+        juce::uint32 retiredAt = 0;
+    };
+    std::vector<StoredShape> lfoShapeStore;
+
     // The numbered modulation parameters are looked up once, their names are built at run time.
-    struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; };
+    struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; std::atomic<float>* mode; };
     struct SlotRefs { std::atomic<float>* source; std::atomic<float>* dest; std::atomic<float>* amount; std::atomic<float>* polarity; };
     std::array<LfoRefs, amv::mod::numLfos> lfoRefs {};
     std::array<std::atomic<float>*, amv::mod::numMacros> macroRefs {};
