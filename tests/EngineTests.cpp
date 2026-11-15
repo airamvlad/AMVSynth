@@ -115,6 +115,14 @@ int main()
         check (near (t.pitchFor (64), 63.5f) && near (t.pitchFor (71), 70.5f), "Rast quarter tones on E and B");
         check (near (t.pitchFor (76), 75.5f) && near (t.pitchFor (52), 51.5f), "quarter tones repeat in every octave");
         check (near (t.stepAbove (62), 1.5f), "Rast three-quarter step above the second");
+
+        // Pythagorean on D: the fifth is a pure 3:2 and the major third is the wide 81:64.
+        t.set (2, (int) getScales().size() - 1, false);
+        const float fifth = 12.0f * std::log2 (1.5f), third = 12.0f * std::log2 (81.0f / 64.0f);
+        check (juce::String (getScales().back().name) == "Pythagorean" && near (t.pitchFor (62), 62.0f)
+                   && near (t.pitchFor (69), 62.0f + fifth, 1.0e-4f) && near (t.pitchFor (66), 62.0f + third, 1.0e-4f)
+                   && near (t.pitchFor (57), 50.0f + fifth, 1.0e-4f),
+               "Pythagorean tuning has pure fifths from the root");
     }
 
     // Engine
@@ -773,6 +781,61 @@ int main()
             };
             check (wheel (127) > wheel (0) * 4.0, "mod wheel to cutoff opens the filter");
         }
+    }
+
+    // Imported wavetables
+    {
+        const float twoPi = juce::MathConstants<float>::twoPi;
+        const int size = UserWavetable::tableSize;
+
+        // A single cycle of an odd length is stretched to the table size.
+        std::vector<float> cycle (600);
+        for (size_t i = 0; i < cycle.size(); ++i)
+            cycle[i] = 0.3f * std::sin (twoPi * (float) i / (float) cycle.size()) + 0.2f; // quiet and with an offset
+        const auto single = UserWavetable::fromAudio (cycle.data(), (int) cycle.size(), "single");
+        bool isSine = single != nullptr;
+        for (int i = 0; isSine && i < size; ++i)
+            isSine = near (single->wave (7, 0)[i], std::sin (twoPi * (float) i / (float) size), 0.01f);
+        check (isSine, "a single cycle of any length becomes a normalised table without its offset");
+
+        // A row of three frames: a sine, its octave, a saw. They land on the first, middle and last position.
+        std::vector<float> row ((size_t) size * 3);
+        for (int i = 0; i < size; ++i)
+        {
+            const float ph = (float) i / (float) size;
+            row[(size_t) i] = std::sin (twoPi * ph);
+            row[(size_t) (size + i)] = std::sin (2.0f * twoPi * ph);
+            row[(size_t) (2 * size + i)] = 2.0f * ph - 1.0f;
+        }
+        const auto table = UserWavetable::fromAudio (row.data(), (int) row.size(), "row");
+        bool first = table != nullptr, last = table != nullptr, finite = table != nullptr;
+        float maxStep = 0.0f;
+        for (int i = 0; table != nullptr && i < size; ++i)
+        {
+            first = first && near (table->wave (0, 0)[i], std::sin (twoPi * (float) i / (float) size), 0.01f);
+            if (i > 40 && i < size - 40)
+                last = last && near (table->wave (UserWavetable::numFrames - 1, 0)[i], 2.0f * (float) i / (float) size - 1.0f, 0.06f);
+            const float* top = table->wave (UserWavetable::numFrames - 1, UserWavetable::numLevels - 1);
+            maxStep = juce::jmax (maxStep, std::abs (top[i + 1] - top[i]));
+            for (int f = 0; f < UserWavetable::numFrames; ++f)
+                finite = finite && std::isfinite (table->wave (f, 0)[i]) && std::abs (table->wave (f, 0)[i]) <= 1.0001f;
+        }
+        check (first && last && finite, "a row of frames is spread from the first to the last position");
+        check (maxStep < 0.01f, "the highest level of an imported saw has no sharp edges");
+        check (UserWavetable::fromAudio (row.data(), 4, "short") == nullptr, "audio that is too short is refused");
+
+        // The engine plays it when the oscillator is set to the User table, and a sine when nothing was imported.
+        EngineParams p;
+        p.engineLevel = 0.0f;
+        p.oscA.table = WavetableBank::numTables;
+        p.oscA.position = 1.0f;
+        p.oscA.level = 1.0f;
+        const auto withoutImport = render (p);
+        p.userWave[0] = table.get();
+        const auto withImport = render (p);
+        check (withImport.finite && withImport.peak > 0.05f && withoutImport.finite && withoutImport.peak > 0.05f
+                   && ! near (withImport.peak, withoutImport.peak, 1.0e-3f),
+               "the User table plays the imported wavetable");
     }
 
     // Filter types, reference pitch and MPE, measured on a plain sine from oscillator A.

@@ -70,6 +70,7 @@ private:
         int table = -1;
         float position = 0.0f;
         bool active = false;
+        const amv::UserWavetable* user = nullptr; // shown when the table is "User"
     };
 
     /** Stereo output level in decibels, with a slow fall and a clip light. */
@@ -99,6 +100,7 @@ private:
     private:
         enum Handle { none = -1, attackHandle, decayHandle, releaseHandle };
 
+        bool showsValues() const { return getWidth() >= 230; }
         juce::Rectangle<float> graphArea() const;
         float segmentWidth() const;
         std::array<juce::Point<float>, 5> points() const;
@@ -130,6 +132,7 @@ private:
         int columnsInColumn = 1;
         int columnWidth = 0; // preferred width of a column cell, 0 for the default
         juce::Component* display = nullptr; // optional wide component between the column and the knobs
+        float displayShare = 0.4f;          // part of the width the display takes when there are knobs too
         juce::Rectangle<int> bounds;
     };
 
@@ -171,6 +174,8 @@ private:
     LevelMeter levelMeter;
     EnvelopeDisplay ampEnvDisplay, filterEnvDisplay;
     juce::TooltipWindow tooltipWindow { this };
+    std::array<juce::TextButton, 2> importButtons;
+    void importWavetable (int osc);
     juce::Slider tuneBox;
     std::unique_ptr<APVTS::SliderAttachment> tuneAttachment;
     juce::MidiKeyboardComponent keyboard;

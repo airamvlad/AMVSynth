@@ -43,6 +43,12 @@ public:
     bool savePresetFile (const juce::File&);
     bool loadPresetFile (const juce::File&);
 
+    /** Reads an audio file as the "User" wavetable of oscillator 0 (A) or 1 (B). Message thread only. */
+    bool importWavetable (int osc, const juce::File&);
+
+    /** The imported wavetable of an oscillator, or null. Message thread only. */
+    const amv::UserWavetable* getUserWavetable (int osc) const noexcept { return activeUserWave[(size_t) osc].load(); }
+
     /** Highest output level since the editor last read it; the editor resets it to zero. */
     std::array<std::atomic<float>, 2> outputPeak {};
 
@@ -61,6 +67,14 @@ private:
     juce::MidiBuffer arpMidi;
     juce::SmoothedValue<float> outputGain;
     int currentPreset = 0;
+
+    // Imported wavetables. The audio thread only reads the pointers; the tables themselves are
+    // made and thrown away on the message thread, a few imports after they were replaced.
+    void setUserWavetable (int osc, std::unique_ptr<amv::UserWavetable>);
+    void storeUserWavetables();
+    void restoreUserWavetables();
+    std::array<std::atomic<const amv::UserWavetable*>, 2> activeUserWave {};
+    std::vector<std::unique_ptr<amv::UserWavetable>> userWaveStore;
 
     // The numbered modulation parameters are looked up once, their names are built at run time.
     struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; };

@@ -132,6 +132,9 @@ struct EngineParams
     float ornChance = 1.0f;
 
     // Filter and envelopes
+    // Imported wavetables of oscillator A and B, used when its table is set to "User". Not owned.
+    std::array<const UserWavetable*, 2> userWave {};
+
     int filterType = filter::lowPass12;
     float cutoffHz = 3200.0f;
     float resonance = 0.25f;
@@ -353,8 +356,8 @@ public:
 
         const float chunkInc = midiToHz (currentPitch + bend + juce::jmax (modPitch, pitchTarget) + 1.0f) / sr;
         OscCoeffs oscA, oscB;
-        prepareOsc (oscA, p.oscA, chunkInc);
-        prepareOsc (oscB, p.oscB, chunkInc);
+        prepareOsc (oscA, p.oscA, chunkInc, p.userWave[0]);
+        prepareOsc (oscB, p.oscB, chunkInc, p.userWave[1]);
 
         const bool subOn = p.subLevel > 0.0f, noiseOn = p.noiseLevel > 0.0f;
         const bool extras = oscA.on || oscB.on || subOn;
@@ -542,7 +545,7 @@ private:
     };
 
     /** `noteInc` is the phase increment of the note itself, with a little headroom. */
-    static void prepareOsc (OscCoeffs& oc, const OscParams& op, float noteInc)
+    static void prepareOsc (OscCoeffs& oc, const OscParams& op, float noteInc, const UserWavetable* user)
     {
         oc.on = op.level > 0.0f;
         if (! oc.on)
@@ -569,13 +572,24 @@ private:
         oc.wide = oc.count > 1 && op.width > 0.001f;
 
         const auto& bank = WavetableBank::get();
-        const int table = juce::jlimit (0, WavetableBank::numTables - 1, op.table);
         const int level = WavetableBank::levelFor (noteInc * highest);
         const float framePos = juce::jlimit (0.0f, 1.0f, op.position) * (float) (WavetableBank::numFrames - 1);
         const int frame = juce::jmin ((int) framePos, WavetableBank::numFrames - 2);
 
-        oc.waveA = bank.wave (table, frame, level);
-        oc.waveB = bank.wave (table, frame + 1, level);
+        // The table after the built-in ones is the imported one; without an import it is a sine.
+        if (op.table >= WavetableBank::numTables && user != nullptr)
+        {
+            oc.waveA = user->wave (frame, level);
+            oc.waveB = user->wave (frame + 1, level);
+        }
+        else
+        {
+            const int table = op.table >= WavetableBank::numTables ? 0 : juce::jmax (0, op.table);
+            const int builtInFrame = op.table >= WavetableBank::numTables ? 0 : frame;
+            oc.waveA = bank.wave (table, builtInFrame, level);
+            oc.waveB = bank.wave (table, op.table >= WavetableBank::numTables ? 0 : frame + 1, level);
+        }
+
         oc.frameMix = framePos - (float) frame;
         oc.gain = op.level * 0.75f / std::sqrt ((float) oc.count);
     }
