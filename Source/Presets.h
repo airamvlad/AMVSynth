@@ -20,7 +20,7 @@ inline const std::vector<Preset>& getFactoryPresets()
     using namespace id;
 
     // Choice indices used below.
-    enum { juzni = 0, accordion, gusle, frula, kaval, gajde, zurlaModel, tambura, tapan };
+    enum { juzni = 0, accordion, gusle, frula, kaval, gajde, zurlaModel, tambura, tapan, dvojnice, clarinet, truba, violin };
     enum { chromatic = 0, hijaz, hijazkar, nikriz, harmonicMinor, kurdi, rast, ussak, huseyni, saba, naturalMinor, majorScale };
     enum { m44 = 0, m58, m78a, m78b, m98, m118 };
     enum { basic = 0, acid, pwm, vowels, kavalTable, zurla, reeds, bells };
@@ -107,6 +107,31 @@ inline const std::vector<Preset>& getFactoryPresets()
             { model, tapan }, { tapThump, 0.55f }, { tapSnap, 0.5f }, { tapDecay, 0.45f }, { tapRing, 0.3f },
             { vibDepth, 0.0f }, { glide, 0.0f }, { cutoff, 14000.0f }, { filterEnv, 0.0f },
             { ampA, 0.5f }, { ampS, 1.0f }, { ampR, 300.0f }, { reverbOn, 1 }, { reverbSize, 0.3f }, { reverbMix, 10.0f } } },
+
+        { "Dvojnice", {
+            { model, dvojnice }, { dvoBreath, 0.7f }, { dvoSecond, 0.7f }, { dvoInterval, -3.0f }, { dvoBeat, 0.35f },
+            { scale, majorScale }, { snap, 1 }, { ornGrace, 1 }, { ornMordent, 1 }, { ornChance, 50.0f }, { ornSpeed, 45.0f },
+            { glide, 15.0f }, { vibDepth, 10.0f }, { ampA, 25.0f }, { cutoff, 9000.0f }, { filterEnv, 0.0f },
+            { level, -11.0f }, { reverbOn, 1 }, { reverbMix, 22.0f } } },
+
+        { "Klarinet Svadba", {
+            { model, clarinet }, { claBreath, 0.7f }, { claReed, 0.35f }, { claGrowl, 0.15f }, { claBody, 0.55f },
+            { scale, hijaz }, { snap, 1 }, { ornGrace, 1 }, { ornTrill, 1 }, { ornFall, 1 }, { ornChance, 55.0f }, { ornSpeed, 44.0f },
+            { glide, 80.0f }, { bendRange, 3.0f }, { vibDepth, 26.0f }, { vibRate, 5.8f }, { ampA, 18.0f },
+            { cutoff, 8000.0f }, { filterEnv, 0.0f }, { level, -11.0f },
+            { delayOn, 1 }, { delayMix, 18.0f }, { reverbOn, 1 }, { reverbMix, 20.0f } } },
+
+        { "Truba Guca", {
+            { model, truba }, { truBlow, 0.7f }, { truBlare, 0.6f }, { truRasp, 0.2f }, { truMute, 0.0f },
+            { scale, nikriz }, { snap, 1 }, { ornGrace, 1 }, { ornMordent, 1 }, { ornFall, 1 }, { ornChance, 50.0f }, { ornAmount, 0.6f },
+            { glide, 25.0f }, { vibDepth, 22.0f }, { vibRate, 6.0f }, { vibDelay, 300.0f }, { ampA, 12.0f },
+            { cutoff, 10000.0f }, { filterEnv, 0.0f }, { level, -11.0f }, { reverbOn, 1 }, { reverbSize, 0.5f }, { reverbMix, 16.0f } } },
+
+        { "Violina Starogradska", {
+            { model, violin }, { vioBow, 0.7f }, { vioPosition, 0.3f }, { vioScratch, 0.2f }, { vioBody, 0.6f },
+            { scale, harmonicMinor }, { snap, 1 }, { ornGrace, 1 }, { ornChance, 35.0f },
+            { glide, 90.0f }, { vibDepth, 30.0f }, { vibRate, 5.6f }, { vibDelay, 260.0f }, { ampA, 70.0f }, { ampR, 240.0f },
+            { cutoff, 8000.0f }, { filterEnv, 0.0f }, { level, -11.0f }, { reverbOn, 1 }, { reverbSize, 0.7f }, { reverbMix, 26.0f } } },
 
         { "Psy Bass", {
             { engineLevel, 0.0f }, { oscATable, basic }, { oscAPos, 0.66f }, { oscALevel, 0.9f }, { oscAPitch, -12.0f },

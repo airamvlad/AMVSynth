@@ -24,7 +24,11 @@ enum class Model
     gajde,
     zurla,
     tambura,
-    tapan
+    tapan,
+    dvojnice,
+    clarinet,
+    truba,
+    violin
 };
 
 enum class Ornament
@@ -87,6 +91,10 @@ struct EngineParams
     //   zurla: pressure, bite, growl, nasal
     //   tambura: pluck, decay, double string, tone
     //   tapan: thump, snap, decay, ring
+    //   dvojnice: breath, second pipe level, interval in semitones, beating
+    //   clarinet: breath, reed, growl, body
+    //   truba: blow, blare, rasp, mute
+    //   violin: bow, position, scratch, body
     std::array<float, 4> macro { 0.7f, 0.4f, 0.3f, 0.5f };
 
     // Performance
@@ -361,6 +369,10 @@ public:
                     case Model::zurla:      s = renderZurla (pitch, sr, p, mc); break;
                     case Model::tambura:    s = renderTambura (pitch, sr, p, mc); break;
                     case Model::tapan:      s = renderTapan (pitch, sr, p, mc); break;
+                    case Model::dvojnice:   s = renderDvojnice (pitch, sr, p, mc); break;
+                    case Model::clarinet:   s = renderClarinet (pitch, sr, p, mc); break;
+                    case Model::truba:      s = renderTruba (pitch, sr, p, mc); break;
+                    case Model::violin:     s = renderViolin (pitch, sr, p, mc); break;
                 }
 
                 s *= p.engineLevel;
@@ -672,6 +684,51 @@ private:
                 return;
             }
 
+            case Model::dvojnice:
+            {
+                const float breath = 0.25f + 0.75f * p.macro[0];
+                mc.level = breath * 1.5f;
+                mc.slowCoeff = onePole (7.0f);
+                bands[0].set (hz * 2.0f, 2.5f, sr);
+                return;
+            }
+
+            case Model::clarinet:
+            {
+                const float breath = 0.25f + 0.75f * p.macro[0];
+                mc.level = breath * 1.3f;
+                mc.brightCoeff = onePole (700.0f * std::exp2 (breath * 3.2f));
+                mc.slowCoeff = onePole (4.0f);
+                mc.fastCoeff = onePole (45.0f);
+                bands[0].set (1500.0f, 2.5f, sr);
+                bands[1].set (3100.0f, 3.5f, sr);
+                return;
+            }
+
+            case Model::truba:
+            {
+                mc.level = (0.3f + 0.7f * p.macro[0]) * 1.4f;
+                mc.slowCoeff = onePole (5.0f);
+                mc.fastCoeff = onePole (70.0f);
+                mc.clickDecay = std::exp (-1.0f / (0.07f * sr)); // how long the attack stays extra bright
+                bands[0].set (1250.0f, 2.0f, sr);                // the bell
+                bands[1].set (1900.0f, 5.0f, sr);                // the mute
+                return;
+            }
+
+            case Model::violin:
+            {
+                const float bow = 0.2f + 0.8f * p.macro[0];
+                mc.level = bow * 1.5f;
+                mc.brightCoeff = onePole (1600.0f * std::exp2 (bow * 2.6f));
+                mc.slowCoeff = onePole (12.0f);
+                mc.fastCoeff = onePole (3000.0f);
+                bands[0].set (290.0f, 5.0f, sr);
+                bands[1].set (520.0f, 4.0f, sr);
+                bands[2].set (2900.0f, 2.5f, sr);
+                return;
+            }
+
             case Model::juzniVetar:
                 return;
 
@@ -852,6 +909,100 @@ private:
         reedLp += (s - reedLp) * mc.brightCoeff;
         const float formants = bands[0].process (reedLp) * 2.0f + bands[1].process (reedLp) * 1.6f + bands[2].process (reedLp) * 1.0f;
         return (reedLp * (1.0f - 0.6f * nasal) + formants * nasal) * mc.level;
+    }
+
+    /** Dvojnice: a double flute carved from one piece of wood. One pipe plays the tune, the other
+        holds a second voice a fixed interval away; slightly mistuned pipes beat against each other. */
+    float renderDvojnice (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float breath = p.macro[0], second = p.macro[1], interval = p.macro[2], beating = p.macro[3];
+        const float twoPi = juce::MathConstants<float>::twoPi;
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        const float wobble = slowNoise * 5.0f;
+        const float incA = midiToHz (pitch + wobble) / sr;
+        const float incB = juce::jmin (0.45f, midiToHz (pitch + interval + beating * 0.35f - wobble) / sr);
+
+        const auto pipe = [twoPi, breath] (float phase)
+        {
+            const float ph = phase * twoPi;
+            return std::sin (ph) + 0.3f * std::sin (2.0f * ph) + (0.1f + 0.15f * breath) * std::sin (3.0f * ph);
+        };
+
+        const float tone = pipe (phases[0]) + second * pipe (phases[1]);
+        advance (phases[0], incA);
+        advance (phases[1], incB);
+
+        const float air = bands[0].process (noise()) * (0.25f + 0.5f * breath);
+        return (tone * 0.5f * (1.0f + slowNoise * 4.0f) + air) * mc.level / (1.0f + 0.6f * second);
+    }
+
+    /** Clarinet: a single reed on a straight pipe, so the odd harmonics dominate. Dark and woody
+        when soft, with a growl when pushed, as in Balkan wedding bands. */
+    float renderClarinet (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float reed = p.macro[1], growl = p.macro[2], body = p.macro[3];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+
+        const float inc = midiToHz (pitch + slowNoise * 2.5f) / sr;
+        // A square wave has only odd harmonics; the reed control brings the even ones in.
+        float s = pulse (phases[0], inc, 0.5f - 0.14f * reed) * 0.8f + saw (phases[0], inc) * 0.35f * reed;
+        advance (phases[0], inc);
+
+        s *= 1.0f + growl * 10.0f * fastNoise;
+        s += (noise() - fastNoise) * 0.03f;
+
+        reedLp += (s - reedLp) * mc.brightCoeff;
+        const float formants = bands[0].process (reedLp) * 1.3f + bands[1].process (reedLp) * 0.8f;
+        return (reedLp * (1.0f - 0.4f * body) + formants * body) * mc.level;
+    }
+
+    /** Truba: the trumpet of the brass bands. The lips buzz like a sawtooth, the tone gets
+        brighter the harder it is blown, and every note starts with a short extra bright blare. */
+    float renderTruba (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float blow = p.macro[0], blare = p.macro[1], rasp = p.macro[2], mute = p.macro[3];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+
+        // The pitch scoops up into the note a little while the blare lasts.
+        const float inc = midiToHz (pitch + slowNoise * 2.0f - clickEnv * blare * 0.35f) / sr;
+        float s = saw (phases[0], inc) * 0.8f + pulse (phases[0], inc, 0.18f) * 0.4f;
+        advance (phases[0], inc);
+        s *= 1.0f + rasp * 8.0f * fastNoise;
+
+        const float brightHz = 600.0f * std::exp2 (blow * 3.0f + clickEnv * blare * 2.0f);
+        const float coeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (brightHz, 0.45f * sr) / sr);
+        reedLp += (s - reedLp) * coeff;
+        clickEnv *= mc.clickDecay;
+
+        const float bell = bands[0].process (reedLp);
+        const float muted = bands[1].process (reedLp) * 2.2f;
+        return ((reedLp + bell * 0.8f) * (1.0f - mute) + muted * mute) * mc.level;
+    }
+
+    /** Violin: a bowed string like the gusle, but with a smoother bow and the resonances of a
+        thin wooden body, as played in the old town and Vojvodina styles. */
+    float renderViolin (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        const float position = p.macro[1], scratch = p.macro[2], body = p.macro[3];
+
+        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
+        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+
+        const float inc = midiToHz (pitch + scratch * 2.0f * slowNoise) / sr;
+        float s = saw (phases[0], inc) * (1.0f - 0.4f * position) + pulse (phases[0], inc, 0.12f + 0.2f * position) * position * 0.5f;
+        advance (phases[0], inc);
+
+        s *= 1.0f + scratch * 1.5f * fastNoise;
+        s += scratch * 0.12f * (noise() - fastNoise);
+
+        reedLp += (s - reedLp) * mc.brightCoeff;
+        const float resonances = bands[0].process (reedLp) * 1.2f + bands[1].process (reedLp) * 1.4f + bands[2].process (reedLp) * 1.1f;
+        return (reedLp * (1.0f - 0.55f * body) + resonances * body) * mc.level;
     }
 
     /** Tambura: a pair of metal strings plucked with a pick. Each string is a delay line one

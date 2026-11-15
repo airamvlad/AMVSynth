@@ -142,8 +142,8 @@ int main()
 
     // Every model renders, stays in a sane range and falls silent.
     {
-        const char* names[] { "lead", "accordion", "gusle", "frula", "kaval", "gajde", "zurla", "tambura", "tapan" };
-        for (int m = 0; m < 9; ++m)
+        const char* names[] { "lead", "accordion", "gusle", "frula", "kaval", "gajde", "zurla", "tambura", "tapan", "dvojnice", "clarinet", "truba", "violin" };
+        for (int m = 0; m < 13; ++m)
         {
             EngineParams p;
             p.model = (Model) m;
@@ -155,6 +155,14 @@ int main()
                 p.macro = { 0.65f, 0.55f, 0.4f, 0.6f };
             if (p.model == Model::tapan)
                 p.macro = { 0.5f, 0.5f, 0.45f, 0.3f };
+            if (p.model == Model::dvojnice)
+                p.macro = { 0.7f, 0.7f, -3.0f, 0.3f };
+            if (p.model == Model::clarinet)
+                p.macro = { 0.65f, 0.3f, 0.1f, 0.5f };
+            if (p.model == Model::truba)
+                p.macro = { 0.65f, 0.5f, 0.15f, 0.0f };
+            if (p.model == Model::violin)
+                p.macro = { 0.7f, 0.3f, 0.2f, 0.6f };
             const auto r = render (p);
             std::printf ("      %-10s peak %.3f\n", names[m], (double) r.peak);
             check (r.finite && r.peak > 0.05f && r.peak < 3.0f && r.tailPeak < 1.0e-4f, names[m]);

@@ -130,6 +130,10 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         modelKnobs.push_back (makeKnobs (true, { { id::zurPressure, "PRESSURE" }, { id::zurBite, "BITE" }, { id::zurGrowl, "GROWL" }, { id::zurNasal, "NASAL" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::tamPluck, "PLUCK" }, { id::tamDecay, "DECAY" }, { id::tamDouble, "DOUBLE" }, { id::tamTone, "TONE" } }));
         modelKnobs.push_back (makeKnobs (true, { { id::tapThump, "THUMP" }, { id::tapSnap, "SNAP" }, { id::tapDecay, "DECAY" }, { id::tapRing, "RING" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::dvoBreath, "BREATH" }, { id::dvoSecond, "SECOND" }, { id::dvoInterval, "INTERVAL" }, { id::dvoBeat, "BEATING" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::claBreath, "BREATH" }, { id::claReed, "REED" }, { id::claGrowl, "GROWL" }, { id::claBody, "BODY" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::truBlow, "BLOW" }, { id::truBlare, "BLARE" }, { id::truRasp, "RASP" }, { id::truMute, "MUTE" } }));
+        modelKnobs.push_back (makeKnobs (true, { { id::vioBow, "BOW" }, { id::vioPosition, "POSITION" }, { id::vioScratch, "SCRATCH" }, { id::vioBody, "BODY" } }));
     }
     {
         auto& s = addSection ("PERFORMANCE", false, 0, 6.0f);
