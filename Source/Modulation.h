@@ -146,6 +146,45 @@ inline const std::array<const char*, 3>& getModPolarities()
     return names;
 }
 
+/** How the copies of a stacked Balkan model are tuned. */
+namespace stack
+{
+enum Mode { unison = 0, octaves, fifths, minorChord, majorChord, sus4Chord, numModes };
+inline constexpr int maxCopies = 5;
+
+/** Semitones of each copy above the played note. The first copy is always the note itself. */
+inline constexpr int intervals[numModes][maxCopies] {
+    { 0, 0, 0, 0, 0 },
+    { 0, 12, -12, 12, 0 },
+    { 0, 7, 12, -12, 19 },
+    { 0, 7, 3, 12, -12 },
+    { 0, 7, 4, 12, -12 },
+    { 0, 7, 5, 12, -12 },
+};
+
+/** Where a copy sits between -1 and 1, for its detune and its place in the stereo picture.
+    The first copy is in the middle, or nearest to it, and the later ones go outwards in turns. */
+inline float position (int copy, int count) noexcept
+{
+    if (count <= 1)
+        return 0.0f;
+
+    // The places from the middle outwards: 0, -a, +a, -b, +b ... for an odd count; -a, +a, -b, +b ... for an even one.
+    const int odd = count & 1;
+    const int ring = (copy + 1 + (1 - odd)) / 2;          // 0 is the middle
+    const float step = 2.0f / (float) (count - 1);
+    const float distance = odd != 0 ? (float) ring * step : ((float) ring - 0.5f) * step;
+    const bool right = ((copy + odd) & 1) != 0;
+    return ring == 0 && odd != 0 ? 0.0f : (right ? distance : -distance);
+}
+} // namespace stack
+
+inline const std::array<const char*, stack::numModes>& getStackModes()
+{
+    static const std::array<const char*, stack::numModes> names { "Unison", "Octaves", "Fifths", "Minor", "Major", "Sus4" };
+    return names;
+}
+
 namespace warp
 {
 enum Mode

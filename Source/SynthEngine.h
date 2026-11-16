@@ -72,6 +72,12 @@ struct EngineParams
     Model model = Model::juzniVetar;
     float engineLevel = 1.0f;  // level of the Balkan model in the mixer
 
+    // The model can be stacked: several copies of it per note, detuned for a unison or set to the notes of a chord.
+    int stackCount = 1;              // 1..5 copies
+    int stackMode = 0;               // index into getStackModes()
+    float stackDetuneCents = 14.0f;  // how far the outermost copies are from the note
+    float stackSpread = 0.5f;        // 0 = all copies in the middle, 1 = spread fully left and right
+
     // Wavetable oscillators, sub oscillator and noise, mixed with the model before the filter
     OscParams oscA, oscB;
     float subLevel = 0.0f;
@@ -195,8 +201,9 @@ public:
         size_t length = 1024;
         while ((double) length < newSampleRate / 14.0)
             length *= 2;
-        for (auto& s : strings)
-            s.buffer.assign (length, 0.0f);
+        for (auto& state : modelStates)
+            for (auto& s : state.strings)
+                s.buffer.assign (length, 0.0f);
 
         reset();
     }
@@ -272,7 +279,6 @@ public:
         {
             filter.reset();
             filter2.reset();
-            phases = { 0.0f, 0.37f, 0.71f, 0.13f, 0.52f };
             for (auto* osc : { &oscPhasesA, &oscPhasesB })
             {
                 // The first copy always starts at zero so a single oscillator has a repeatable attack.
@@ -286,29 +292,43 @@ public:
             lastFilterEnv = 0.0f;
             lastEnv3 = 0.0f;
             modSnap = true;
-            reedLp = 0.0f;
-            clickLp = 0.0f;
-            clickHp = 0.0f;
-            slowNoise = 0.0f;
-            fastNoise = 0.0f;
-            for (auto& b : bands)
-                b.reset();
         }
 
-        // A new note plucks the strings and hits the drum again; a legato slide does not.
-        for (auto& s : strings)
-            s.clear();
-        exciteLeft = juce::jmax (2, (int) ((float) sampleRate / midiToHz (targetPitch)));
-        exciteLp = 0.0f;
-        drumTime = 0.0f;
-        if (! wasActive)
-            drumPhase = { 0.0f, 0.0f };
+        for (size_t copy = 0; copy < modelStates.size(); ++copy)
+        {
+            auto& state = modelStates[copy];
+
+            if (! wasActive)
+            {
+                // The first copy always starts the same way; the others start anywhere in their cycle.
+                state.phases = { 0.0f, 0.37f, 0.71f, 0.13f, 0.52f };
+                if (copy > 0)
+                    for (auto& ph : state.phases)
+                        ph = random.nextFloat();
+
+                state.reedLp = 0.0f;
+                state.clickLp = 0.0f;
+                state.clickHp = 0.0f;
+                state.slowNoise = 0.0f;
+                state.fastNoise = 0.0f;
+                for (auto& b : state.bands)
+                    b.reset();
+                state.drumPhase = { 0.0f, 0.0f };
+            }
+
+            // A new note plucks the strings and hits the drum again; a legato slide does not.
+            for (auto& s : state.strings)
+                s.clear();
+            state.exciteLeft = juce::jmax (2, (int) ((float) sampleRate / midiToHz (targetPitch)));
+            state.exciteLp = 0.0f;
+            state.drumTime = 0.0f;
+            state.clickEnv = 1.0f;
+        }
 
         // A legato slide keeps the sample running, a new note starts it again.
         samplerVoice.start (p.sampler, (juce::uint32) random.nextInt());
 
         vibTime = 0.0f;
-        clickEnv = 1.0f;
         ampEnv.setParameters (p.amp);
         fltEnv.setParameters (p.flt);
         env3.setParameters (p.env3);
@@ -481,9 +501,28 @@ public:
         };
         const bool engineOn = p.engineLevel > 0.0f || uses (xmod::engine);
 
+        // The stack: how many copies of the model sound, and where each one is tuned and placed.
+        // A drum is never stacked.
+        const int copies = engineOn && ! isDrum (p.model) ? juce::jlimit (1, maxStack, p.stackCount) : 1;
+        const int stackMode = juce::jlimit (0, (int) stack::numModes - 1, p.stackMode);
+        const float stackGain = 1.0f / std::sqrt ((float) copies);
+        const bool stackWide = copies > 1 && p.stackSpread > 0.0f;
+        float copyPitch[maxStack] {}, copyLeft[maxStack] {}, copyRight[maxStack] {};
+
         ModelCoeffs mc;
-        if (engineOn)
-            prepareModel (mc, p, sr);
+        for (int c = 0; c < copies && engineOn; ++c)
+        {
+            const float place = stack::position (c, copies);
+            copyPitch[c] = (float) stack::intervals[stackMode][c] + place * p.stackDetuneCents * 0.01f;
+
+            // Equal power, with a copy in the middle at full level on both sides.
+            const float angle = (0.5f + 0.5f * place * juce::jlimit (0.0f, 1.0f, p.stackSpread)) * juce::MathConstants<float>::halfPi;
+            copyLeft[c] = std::cos (angle) * juce::MathConstants<float>::sqrt2 * stackGain;
+            copyRight[c] = std::sin (angle) * juce::MathConstants<float>::sqrt2 * stackGain;
+
+            ms = &modelStates[(size_t) c];
+            prepareModel (mc, p, sr, copyPitch[c]);
+        }
 
         const float chunkInc = midiToHz (currentPitch + bend + juce::jmax (modPitch, pitchTarget) + 1.0f) / sr;
         OscCoeffs oscA, oscB;
@@ -501,7 +540,8 @@ public:
         const float samplerRootHz = midiToHz ((float) p.sampler.rootNote);
 
         // Only spread unison and the sampler need a second filter; everything else is the same on both sides.
-        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide) || (samplerOn && p.sampler.level > 0.0f);
+        const bool wide = (oscA.on && oscA.wide) || (oscB.on && oscB.wide) || (samplerOn && p.sampler.level > 0.0f)
+                          || (stackWide && p.engineLevel > 0.0f);
         const float subRatio = p.subOctave >= 2 ? 0.25f : 0.5f;
         const float noiseCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (p.noiseColorHz, 0.45f * sr) / sr);
 
@@ -535,31 +575,22 @@ public:
             float modulators[xmod::numSources] {}; // what each source gives an oscillator, at full level
             if (engineOn)
             {
-                switch (p.model)
+                float engineLeft = 0.0f, engineRight = 0.0f;
+
+                for (int c = 0; c < copies; ++c)
                 {
-                    case Model::juzniVetar: s = renderLead (pitch, sr, p, mc); break;
-                    case Model::accordion:  s = renderAccordion (pitch, sr, mc); break;
-                    case Model::gusle:      s = renderGusle (pitch, sr, p, mc); break;
-                    case Model::frula:      s = renderPipe (pitch, sr, p, mc, false); break;
-                    case Model::kaval:      s = renderPipe (pitch, sr, p, mc, true); break;
-                    case Model::gajde:      s = renderGajde (pitch, sr, p, mc); break;
-                    case Model::zurla:      s = renderZurla (pitch, sr, p, mc); break;
-                    case Model::tambura:    s = renderTambura (pitch, sr, p, mc); break;
-                    case Model::tapan:      s = renderTapan (pitch, sr, p, mc); break;
-                    case Model::dvojnice:   s = renderDvojnice (pitch, sr, p, mc); break;
-                    case Model::clarinet:   s = renderClarinet (pitch, sr, p, mc); break;
-                    case Model::truba:      s = renderTruba (pitch, sr, p, mc); break;
-                    case Model::violin:     s = renderViolin (pitch, sr, p, mc); break;
-                    case Model::sargija:    s = renderSargija (pitch, sr, p, mc); break;
-                    case Model::kanun:      s = renderKanun (pitch, sr, p, mc); break;
-                    case Model::darbuka:    s = renderDarbuka (pitch, sr, p, mc); break;
-                    case Model::voice:      s = renderVoice (pitch, sr, p, mc); break;
+                    ms = &modelStates[(size_t) c];
+                    const float copy = renderModel (pitch + copyPitch[c], sr, p, mc);
+                    engineLeft += copy * copyLeft[c];
+                    engineRight += copy * copyRight[c];
+
+                    if (c == 0)
+                        s = copy; // the played note itself is what modulates an oscillator
                 }
 
                 modulators[xmod::engine] = s;
-                s *= p.engineLevel;
-                bus[route[EngineParams::routeEngine]][0] += s;
-                bus[route[EngineParams::routeEngine]][1] += s;
+                bus[route[EngineParams::routeEngine]][0] += engineLeft * p.engineLevel;
+                bus[route[EngineParams::routeEngine]][1] += engineRight * p.engineLevel;
             }
 
             if (samplerOn)
@@ -709,6 +740,7 @@ private:
         float musette = 0.0f, reedLpCoeff = 1.0f, reedLevel = 1.0f, clickLevel = 0.0f, clickDecay = 0.0f;
     };
 
+    static constexpr int maxStack = stack::maxCopies;
     static constexpr int maxUnison = 7;
     using OscPhases = std::array<float, maxUnison>;
 
@@ -894,14 +926,41 @@ private:
         return 0.0f;
     }
 
-    void prepareModel (ModelCoeffs& mc, const EngineParams& p, float sr)
+    /** One sample of the selected model, from the copy `ms` points at. */
+    float renderModel (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
+    {
+        switch (p.model)
+        {
+            case Model::juzniVetar: return renderLead (pitch, sr, p, mc);
+            case Model::accordion:  return renderAccordion (pitch, sr, mc);
+            case Model::gusle:      return renderGusle (pitch, sr, p, mc);
+            case Model::frula:      return renderPipe (pitch, sr, p, mc, false);
+            case Model::kaval:      return renderPipe (pitch, sr, p, mc, true);
+            case Model::gajde:      return renderGajde (pitch, sr, p, mc);
+            case Model::zurla:      return renderZurla (pitch, sr, p, mc);
+            case Model::tambura:    return renderTambura (pitch, sr, p, mc);
+            case Model::tapan:      return renderTapan (pitch, sr, p, mc);
+            case Model::dvojnice:   return renderDvojnice (pitch, sr, p, mc);
+            case Model::clarinet:   return renderClarinet (pitch, sr, p, mc);
+            case Model::truba:      return renderTruba (pitch, sr, p, mc);
+            case Model::violin:     return renderViolin (pitch, sr, p, mc);
+            case Model::sargija:    return renderSargija (pitch, sr, p, mc);
+            case Model::kanun:      return renderKanun (pitch, sr, p, mc);
+            case Model::darbuka:    return renderDarbuka (pitch, sr, p, mc);
+            case Model::voice:      return renderVoice (pitch, sr, p, mc);
+        }
+
+        return 0.0f;
+    }
+
+    void prepareModel (ModelCoeffs& mc, const EngineParams& p, float sr, float pitchOffset)
     {
         mc.sawGain = std::cos (p.tone * juce::MathConstants<float>::halfPi);
         mc.pulseGain = std::sin (p.tone * juce::MathConstants<float>::halfPi);
         mc.detune = p.detuneCents * 0.01f;
 
         const auto onePole = [sr] (float hz) { return 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (hz, 0.45f * sr) / sr); };
-        const float hz = midiToHz (currentPitch);
+        const float hz = midiToHz (currentPitch + pitchOffset);
 
         switch (p.model)
         {
@@ -912,9 +971,9 @@ private:
                 mc.brightCoeff = onePole (1100.0f * std::exp2 (bow * 3.0f));
                 mc.slowCoeff = onePole (18.0f);
                 mc.fastCoeff = onePole (2200.0f);
-                bands[0].set (430.0f, 4.0f, sr);
-                bands[1].set (1150.0f, 6.0f, sr);
-                bands[2].set (2500.0f, 5.0f, sr);
+                ms->bands[0].set (430.0f, 4.0f, sr);
+                ms->bands[1].set (1150.0f, 6.0f, sr);
+                ms->bands[2].set (2500.0f, 5.0f, sr);
                 return;
             }
 
@@ -926,8 +985,8 @@ private:
                 mc.level = breath * 1.8f;
                 mc.slowCoeff = onePole (9.0f);
                 mc.clickDecay = std::exp (-1.0f / (0.03f * sr));
-                bands[0].set (hz * (isKaval ? 1.5f : 2.0f), isKaval ? 1.6f : 3.0f, sr); // breath noise around the tone
-                bands[1].set (hz * 4.0f, 2.0f, sr);                                       // chiff at the attack
+                ms->bands[0].set (hz * (isKaval ? 1.5f : 2.0f), isKaval ? 1.6f : 3.0f, sr); // breath noise around the tone
+                ms->bands[1].set (hz * 4.0f, 2.0f, sr);                                       // chiff at the attack
                 return;
             }
 
@@ -937,8 +996,8 @@ private:
                 mc.level = bag * 1.1f;
                 mc.slowCoeff = onePole (2.5f);
                 mc.brightCoeff = onePole (1500.0f * std::exp2 (p.macro[3] * 2.6f));
-                bands[0].set (1400.0f, 3.0f, sr);
-                bands[1].set (2900.0f, 4.0f, sr);
+                ms->bands[0].set (1400.0f, 3.0f, sr);
+                ms->bands[1].set (2900.0f, 4.0f, sr);
                 return;
             }
 
@@ -949,9 +1008,9 @@ private:
                 mc.brightCoeff = onePole (2200.0f * std::exp2 (pressure * 2.4f));
                 mc.slowCoeff = onePole (3.0f);
                 mc.fastCoeff = onePole (55.0f);
-                bands[0].set (1250.0f, 3.5f, sr);
-                bands[1].set (2700.0f, 4.5f, sr);
-                bands[2].set (4300.0f, 5.0f, sr);
+                ms->bands[0].set (1250.0f, 3.5f, sr);
+                ms->bands[1].set (2700.0f, 4.5f, sr);
+                ms->bands[2].set (4300.0f, 5.0f, sr);
                 return;
             }
 
@@ -965,8 +1024,8 @@ private:
                 mc.detune = p.macro[2] * 0.14f;
                 mc.slowCoeff = onePole (25.0f);
                 mc.level = 0.9f;
-                bands[0].set (310.0f, 3.0f, sr);
-                bands[1].set (1900.0f, 2.5f, sr);
+                ms->bands[0].set (310.0f, 3.0f, sr);
+                ms->bands[1].set (1900.0f, 2.5f, sr);
                 return;
             }
 
@@ -976,8 +1035,8 @@ private:
                 mc.loss = std::exp (-1.0f / ((0.08f + 0.9f * p.macro[2] * p.macro[2]) * sr)); // decay of the skin
                 mc.clickDecay = std::exp (-1.0f / (0.035f * sr));                             // decay of the stick crack
                 mc.slowCoeff = std::exp (-1.0f / ((0.012f + 0.03f * p.macro[0]) * sr));       // how fast the pitch drops
-                bands[0].set (2400.0f, 1.2f, sr);
-                bands[1].set (5200.0f, 2.0f, sr);
+                ms->bands[0].set (2400.0f, 1.2f, sr);
+                ms->bands[1].set (5200.0f, 2.0f, sr);
                 return;
             }
 
@@ -986,7 +1045,7 @@ private:
                 const float breath = 0.25f + 0.75f * p.macro[0];
                 mc.level = breath * 1.5f;
                 mc.slowCoeff = onePole (7.0f);
-                bands[0].set (hz * 2.0f, 2.5f, sr);
+                ms->bands[0].set (hz * 2.0f, 2.5f, sr);
                 return;
             }
 
@@ -997,8 +1056,8 @@ private:
                 mc.brightCoeff = onePole (700.0f * std::exp2 (breath * 3.2f));
                 mc.slowCoeff = onePole (4.0f);
                 mc.fastCoeff = onePole (45.0f);
-                bands[0].set (1500.0f, 2.5f, sr);
-                bands[1].set (3100.0f, 3.5f, sr);
+                ms->bands[0].set (1500.0f, 2.5f, sr);
+                ms->bands[1].set (3100.0f, 3.5f, sr);
                 return;
             }
 
@@ -1008,8 +1067,8 @@ private:
                 mc.slowCoeff = onePole (5.0f);
                 mc.fastCoeff = onePole (70.0f);
                 mc.clickDecay = std::exp (-1.0f / (0.07f * sr)); // how long the attack stays extra bright
-                bands[0].set (1250.0f, 2.0f, sr);                // the bell
-                bands[1].set (1900.0f, 5.0f, sr);                // the mute
+                ms->bands[0].set (1250.0f, 2.0f, sr);                // the bell
+                ms->bands[1].set (1900.0f, 5.0f, sr);                // the mute
                 return;
             }
 
@@ -1020,9 +1079,9 @@ private:
                 mc.brightCoeff = onePole (1600.0f * std::exp2 (bow * 2.6f));
                 mc.slowCoeff = onePole (12.0f);
                 mc.fastCoeff = onePole (3000.0f);
-                bands[0].set (290.0f, 5.0f, sr);
-                bands[1].set (520.0f, 4.0f, sr);
-                bands[2].set (2900.0f, 2.5f, sr);
+                ms->bands[0].set (290.0f, 5.0f, sr);
+                ms->bands[1].set (520.0f, 4.0f, sr);
+                ms->bands[2].set (2900.0f, 2.5f, sr);
                 return;
             }
 
@@ -1037,8 +1096,8 @@ private:
                 mc.detune = isKanun ? p.macro[2] * 0.1f : 0.0f;
                 mc.slowCoeff = onePole (25.0f);
                 mc.level = isKanun ? 0.65f : 0.95f;
-                bands[0].set (isKanun ? 520.0f : 420.0f, 2.5f, sr);
-                bands[1].set (isKanun ? 3200.0f : 2400.0f, 2.0f, sr);
+                ms->bands[0].set (isKanun ? 520.0f : 420.0f, 2.5f, sr);
+                ms->bands[1].set (isKanun ? 3200.0f : 2400.0f, 2.0f, sr);
                 return;
             }
 
@@ -1048,8 +1107,8 @@ private:
                 mc.loss = std::exp (-1.0f / ((0.03f + 0.35f * p.macro[2] * p.macro[2]) * sr));
                 mc.clickDecay = std::exp (-1.0f / (0.012f * sr));
                 mc.slowCoeff = std::exp (-1.0f / (0.008f * sr));
-                bands[0].set (3500.0f, 1.5f, sr);
-                bands[1].set (7500.0f, 2.0f, sr);
+                ms->bands[0].set (3500.0f, 1.5f, sr);
+                ms->bands[1].set (7500.0f, 2.0f, sr);
                 return;
             }
 
@@ -1065,7 +1124,7 @@ private:
                 const float qs[3] { 7.0f, 9.0f, 10.0f };
 
                 for (size_t k = 0; k < 3; ++k)
-                    bands[k].set ((vowels[seg][k] + (vowels[seg + 1][k] - vowels[seg][k]) * f) * size, qs[k], sr);
+                    ms->bands[k].set ((vowels[seg][k] + (vowels[seg + 1][k] - vowels[seg][k]) * f) * size, qs[k], sr);
 
                 mc.level = 6.0f;
                 mc.brightCoeff = onePole (900.0f * std::exp2 (p.macro[3] * 3.0f));
@@ -1111,14 +1170,14 @@ private:
         const float incP = midiToHz (pitch) / sr;
         const float incS = incP * 0.5f;
 
-        const float saws = 0.5f * (saw (phases[0], incA) + saw (phases[1], incB));
-        const float pls = pulse (phases[2], incP, p.pulseWidth);
-        const float subOsc = p.sub > 0.0f ? pulse (phases[3], incS, 0.5f) * p.sub * 0.7f : 0.0f;
+        const float saws = 0.5f * (saw (ms->phases[0], incA) + saw (ms->phases[1], incB));
+        const float pls = pulse (ms->phases[2], incP, p.pulseWidth);
+        const float subOsc = p.sub > 0.0f ? pulse (ms->phases[3], incS, 0.5f) * p.sub * 0.7f : 0.0f;
 
-        advance (phases[0], incA);
-        advance (phases[1], incB);
-        advance (phases[2], incP);
-        advance (phases[3], incS);
+        advance (ms->phases[0], incA);
+        advance (ms->phases[1], incB);
+        advance (ms->phases[2], incP);
+        advance (ms->phases[3], incS);
 
         return saws * mc.sawGain + pls * mc.pulseGain + subOsc;
     }
@@ -1136,24 +1195,24 @@ private:
 
             const float inc = midiToHz (pitch + offsets[r]) / sr;
             // A free reed chops the air stream, which gives a narrow pulse with some saw in it.
-            sum += mc.gains[r] * (0.6f * pulse (phases[r], inc, 0.3f) + 0.4f * saw (phases[r], inc));
-            advance (phases[r], inc);
+            sum += mc.gains[r] * (0.6f * pulse (ms->phases[r], inc, 0.3f) + 0.4f * saw (ms->phases[r], inc));
+            advance (ms->phases[r], inc);
         }
 
-        reedLp += (sum - reedLp) * mc.reedLpCoeff;
+        ms->reedLp += (sum - ms->reedLp) * mc.reedLpCoeff;
 
         // Key click: a short band of noise when the note starts.
         float clickOut = 0.0f;
-        if (clickEnv > 0.0005f)
+        if (ms->clickEnv > 0.0005f)
         {
             const float noise = random.nextFloat() * 2.0f - 1.0f;
-            clickLp += (noise - clickLp) * 0.45f;
-            clickHp += (clickLp - clickHp) * 0.12f;
-            clickOut = (clickLp - clickHp) * clickEnv * mc.clickLevel;
-            clickEnv *= mc.clickDecay;
+            ms->clickLp += (noise - ms->clickLp) * 0.45f;
+            ms->clickHp += (ms->clickLp - ms->clickHp) * 0.12f;
+            clickOut = (ms->clickLp - ms->clickHp) * ms->clickEnv * mc.clickLevel;
+            ms->clickEnv *= mc.clickDecay;
         }
 
-        return reedLp * mc.reedLevel + clickOut;
+        return ms->reedLp * mc.reedLevel + clickOut;
     }
 
     float noise() noexcept { return random.nextFloat() * 2.0f - 1.0f; }
@@ -1164,20 +1223,20 @@ private:
     {
         const float position = p.macro[1], rasp = p.macro[2], nasal = p.macro[3];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        ms->fastNoise += (noise() - ms->fastNoise) * mc.fastCoeff;
 
-        const float inc = midiToHz (pitch + rasp * 6.0f * slowNoise) / sr;
-        float s = saw (phases[0], inc) * (1.0f - 0.5f * position)
-                  + pulse (phases[0], inc, 0.08f + 0.25f * position) * position * 0.7f;
-        advance (phases[0], inc);
+        const float inc = midiToHz (pitch + rasp * 6.0f * ms->slowNoise) / sr;
+        float s = saw (ms->phases[0], inc) * (1.0f - 0.5f * position)
+                  + pulse (ms->phases[0], inc, 0.08f + 0.25f * position) * position * 0.7f;
+        advance (ms->phases[0], inc);
 
-        s *= 1.0f + rasp * 2.5f * fastNoise;
-        s += rasp * 0.25f * (noise() - fastNoise);
+        s *= 1.0f + rasp * 2.5f * ms->fastNoise;
+        s += rasp * 0.25f * (noise() - ms->fastNoise);
 
-        reedLp += (s - reedLp) * mc.brightCoeff;
-        const float body = bands[0].process (reedLp) * 1.6f + bands[1].process (reedLp) * 2.2f + bands[2].process (reedLp) * 1.2f;
-        return (reedLp * (1.0f - 0.75f * nasal) + body * nasal) * mc.level;
+        ms->reedLp += (s - ms->reedLp) * mc.brightCoeff;
+        const float body = ms->bands[0].process (ms->reedLp) * 1.6f + ms->bands[1].process (ms->reedLp) * 2.2f + ms->bands[2].process (ms->reedLp) * 1.2f;
+        return (ms->reedLp * (1.0f - 0.75f * nasal) + body * nasal) * mc.level;
     }
 
     /** Frula and kaval: an air jet exciting a pipe. A nearly pure tone whose second harmonic takes
@@ -1187,34 +1246,34 @@ private:
         const float breath = p.macro[0], overblow = p.macro[1], noiseAmount = p.macro[2], fourth = p.macro[3];
         const float twoPi = juce::MathConstants<float>::twoPi;
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        const float inc = midiToHz (pitch + slowNoise * 8.0f * noiseAmount) / sr;
-        const float ph = phases[0] * twoPi;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        const float inc = midiToHz (pitch + ms->slowNoise * 8.0f * noiseAmount) / sr;
+        const float ph = ms->phases[0] * twoPi;
 
         const float h2 = (isKaval ? 0.15f : 0.25f) + overblow * 0.9f;
         const float h3 = isKaval ? 0.3f : 0.12f;
         float tone = std::sin (ph) * (1.0f - 0.6f * overblow) + h2 * std::sin (2.0f * ph) + h3 * std::sin (3.0f * ph)
                      + breath * 0.15f * std::sin (4.0f * ph);
-        advance (phases[0], inc);
+        advance (ms->phases[0], inc);
 
         const float white = noise();
-        float air = bands[0].process (white) * noiseAmount * (isKaval ? 1.4f : 0.9f);
+        float air = ms->bands[0].process (white) * noiseAmount * (isKaval ? 1.4f : 0.9f);
 
         if (isKaval)
         {
             // Kaba register: a tone an octave below that also roughens the main tone.
-            const float low = std::sin (phases[1] * twoPi);
+            const float low = std::sin (ms->phases[1] * twoPi);
             tone = tone * (1.0f - 0.35f * fourth + 0.35f * fourth * low) + fourth * 0.6f * low;
-            advance (phases[1], inc * 0.5f);
+            advance (ms->phases[1], inc * 0.5f);
         }
-        else if (clickEnv > 0.0005f)
+        else if (ms->clickEnv > 0.0005f)
         {
             // Chiff: a puff of air before the tone settles.
-            air += bands[1].process (white) * clickEnv * fourth * 2.5f;
-            clickEnv *= mc.clickDecay;
+            air += ms->bands[1].process (white) * ms->clickEnv * fourth * 2.5f;
+            ms->clickEnv *= mc.clickDecay;
         }
 
-        tone *= 1.0f + slowNoise * 12.0f * noiseAmount;
+        tone *= 1.0f + ms->slowNoise * 12.0f * noiseAmount;
         return (tone * 0.6f + air) * mc.level;
     }
 
@@ -1224,16 +1283,16 @@ private:
     {
         const float bag = p.macro[2], edge = p.macro[3];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        const float sag = (1.0f - bag) * (0.25f + 25.0f * slowNoise);
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        const float sag = (1.0f - bag) * (0.25f + 25.0f * ms->slowNoise);
         const float inc = midiToHz (pitch - sag) / sr;
 
-        const float s = pulse (phases[0], inc, 0.32f - 0.2f * edge) * 0.7f + saw (phases[0], inc) * 0.3f;
-        advance (phases[0], inc);
+        const float s = pulse (ms->phases[0], inc, 0.32f - 0.2f * edge) * 0.7f + saw (ms->phases[0], inc) * 0.3f;
+        advance (ms->phases[0], inc);
 
-        reedLp += (s - reedLp) * mc.brightCoeff;
-        const float nasal = bands[0].process (reedLp) * 1.8f + bands[1].process (reedLp) * (0.6f + edge);
-        return (reedLp * 0.45f + nasal) * mc.level;
+        ms->reedLp += (s - ms->reedLp) * mc.brightCoeff;
+        const float nasal = ms->bands[0].process (ms->reedLp) * 1.8f + ms->bands[1].process (ms->reedLp) * (0.6f + edge);
+        return (ms->reedLp * 0.45f + nasal) * mc.level;
     }
 
     /** Zurla: a double reed on a wide conical pipe. Very bright and loud, with a strong nasal
@@ -1242,18 +1301,18 @@ private:
     {
         const float bite = p.macro[1], growl = p.macro[2], nasal = p.macro[3];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        ms->fastNoise += (noise() - ms->fastNoise) * mc.fastCoeff;
 
-        const float inc = midiToHz (pitch + slowNoise * 3.0f + growl * 4.0f * fastNoise) / sr;
-        float s = pulse (phases[0], inc, 0.3f - 0.22f * bite) * 0.65f + saw (phases[0], inc) * 0.5f;
-        advance (phases[0], inc);
+        const float inc = midiToHz (pitch + ms->slowNoise * 3.0f + growl * 4.0f * ms->fastNoise) / sr;
+        float s = pulse (ms->phases[0], inc, 0.3f - 0.22f * bite) * 0.65f + saw (ms->phases[0], inc) * 0.5f;
+        advance (ms->phases[0], inc);
 
-        s *= 1.0f + growl * 9.0f * fastNoise;
+        s *= 1.0f + growl * 9.0f * ms->fastNoise;
 
-        reedLp += (s - reedLp) * mc.brightCoeff;
-        const float formants = bands[0].process (reedLp) * 2.0f + bands[1].process (reedLp) * 1.6f + bands[2].process (reedLp) * 1.0f;
-        return (reedLp * (1.0f - 0.6f * nasal) + formants * nasal) * mc.level;
+        ms->reedLp += (s - ms->reedLp) * mc.brightCoeff;
+        const float formants = ms->bands[0].process (ms->reedLp) * 2.0f + ms->bands[1].process (ms->reedLp) * 1.6f + ms->bands[2].process (ms->reedLp) * 1.0f;
+        return (ms->reedLp * (1.0f - 0.6f * nasal) + formants * nasal) * mc.level;
     }
 
     /** Dvojnice: a double flute carved from one piece of wood. One pipe plays the tune, the other
@@ -1263,8 +1322,8 @@ private:
         const float breath = p.macro[0], second = p.macro[1], interval = p.macro[2], beating = p.macro[3];
         const float twoPi = juce::MathConstants<float>::twoPi;
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        const float wobble = slowNoise * 5.0f;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        const float wobble = ms->slowNoise * 5.0f;
         const float incA = midiToHz (pitch + wobble) / sr;
         const float incB = juce::jmin (0.45f, midiToHz (pitch + interval + beating * 0.35f - wobble) / sr);
 
@@ -1274,59 +1333,59 @@ private:
             return std::sin (ph) + 0.3f * std::sin (2.0f * ph) + (0.1f + 0.15f * breath) * std::sin (3.0f * ph);
         };
 
-        const float tone = pipe (phases[0]) + second * pipe (phases[1]);
-        advance (phases[0], incA);
-        advance (phases[1], incB);
+        const float tone = pipe (ms->phases[0]) + second * pipe (ms->phases[1]);
+        advance (ms->phases[0], incA);
+        advance (ms->phases[1], incB);
 
-        const float air = bands[0].process (noise()) * (0.25f + 0.5f * breath);
-        return (tone * 0.5f * (1.0f + slowNoise * 4.0f) + air) * mc.level / (1.0f + 0.6f * second);
+        const float air = ms->bands[0].process (noise()) * (0.25f + 0.5f * breath);
+        return (tone * 0.5f * (1.0f + ms->slowNoise * 4.0f) + air) * mc.level / (1.0f + 0.6f * second);
     }
 
     /** Clarinet: a single reed on a straight pipe, so the odd harmonics dominate. Dark and woody
-        when soft, with a growl when pushed, as in Balkan wedding bands. */
+        when soft, with a growl when pushed, as in Balkan wedding ms->bands. */
     float renderClarinet (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
     {
         const float reed = p.macro[1], growl = p.macro[2], body = p.macro[3];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        ms->fastNoise += (noise() - ms->fastNoise) * mc.fastCoeff;
 
-        const float inc = midiToHz (pitch + slowNoise * 2.5f) / sr;
+        const float inc = midiToHz (pitch + ms->slowNoise * 2.5f) / sr;
         // A square wave has only odd harmonics; the reed control brings the even ones in.
-        float s = pulse (phases[0], inc, 0.5f - 0.14f * reed) * 0.8f + saw (phases[0], inc) * 0.35f * reed;
-        advance (phases[0], inc);
+        float s = pulse (ms->phases[0], inc, 0.5f - 0.14f * reed) * 0.8f + saw (ms->phases[0], inc) * 0.35f * reed;
+        advance (ms->phases[0], inc);
 
-        s *= 1.0f + growl * 10.0f * fastNoise;
-        s += (noise() - fastNoise) * 0.03f;
+        s *= 1.0f + growl * 10.0f * ms->fastNoise;
+        s += (noise() - ms->fastNoise) * 0.03f;
 
-        reedLp += (s - reedLp) * mc.brightCoeff;
-        const float formants = bands[0].process (reedLp) * 1.3f + bands[1].process (reedLp) * 0.8f;
-        return (reedLp * (1.0f - 0.4f * body) + formants * body) * mc.level;
+        ms->reedLp += (s - ms->reedLp) * mc.brightCoeff;
+        const float formants = ms->bands[0].process (ms->reedLp) * 1.3f + ms->bands[1].process (ms->reedLp) * 0.8f;
+        return (ms->reedLp * (1.0f - 0.4f * body) + formants * body) * mc.level;
     }
 
-    /** Truba: the trumpet of the brass bands. The lips buzz like a sawtooth, the tone gets
+    /** Truba: the trumpet of the brass ms->bands. The lips buzz like a sawtooth, the tone gets
         brighter the harder it is blown, and every note starts with a short extra bright blare. */
     float renderTruba (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
     {
         const float blow = p.macro[0], blare = p.macro[1], rasp = p.macro[2], mute = p.macro[3];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        ms->fastNoise += (noise() - ms->fastNoise) * mc.fastCoeff;
 
         // The pitch scoops up into the note a little while the blare lasts.
-        const float inc = midiToHz (pitch + slowNoise * 2.0f - clickEnv * blare * 0.35f) / sr;
-        float s = saw (phases[0], inc) * 0.8f + pulse (phases[0], inc, 0.18f) * 0.4f;
-        advance (phases[0], inc);
-        s *= 1.0f + rasp * 8.0f * fastNoise;
+        const float inc = midiToHz (pitch + ms->slowNoise * 2.0f - ms->clickEnv * blare * 0.35f) / sr;
+        float s = saw (ms->phases[0], inc) * 0.8f + pulse (ms->phases[0], inc, 0.18f) * 0.4f;
+        advance (ms->phases[0], inc);
+        s *= 1.0f + rasp * 8.0f * ms->fastNoise;
 
-        const float brightHz = 600.0f * std::exp2 (blow * 3.0f + clickEnv * blare * 2.0f);
+        const float brightHz = 600.0f * std::exp2 (blow * 3.0f + ms->clickEnv * blare * 2.0f);
         const float coeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (brightHz, 0.45f * sr) / sr);
-        reedLp += (s - reedLp) * coeff;
-        clickEnv *= mc.clickDecay;
+        ms->reedLp += (s - ms->reedLp) * coeff;
+        ms->clickEnv *= mc.clickDecay;
 
-        const float bell = bands[0].process (reedLp);
-        const float muted = bands[1].process (reedLp) * 2.2f;
-        return ((reedLp + bell * 0.8f) * (1.0f - mute) + muted * mute) * mc.level;
+        const float bell = ms->bands[0].process (ms->reedLp);
+        const float muted = ms->bands[1].process (ms->reedLp) * 2.2f;
+        return ((ms->reedLp + bell * 0.8f) * (1.0f - mute) + muted * mute) * mc.level;
     }
 
     /** Violin: a bowed string like the gusle, but with a smoother bow and the resonances of a
@@ -1335,108 +1394,108 @@ private:
     {
         const float position = p.macro[1], scratch = p.macro[2], body = p.macro[3];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        ms->fastNoise += (noise() - ms->fastNoise) * mc.fastCoeff;
 
-        const float inc = midiToHz (pitch + scratch * 2.0f * slowNoise) / sr;
-        float s = saw (phases[0], inc) * (1.0f - 0.4f * position) + pulse (phases[0], inc, 0.12f + 0.2f * position) * position * 0.5f;
-        advance (phases[0], inc);
+        const float inc = midiToHz (pitch + scratch * 2.0f * ms->slowNoise) / sr;
+        float s = saw (ms->phases[0], inc) * (1.0f - 0.4f * position) + pulse (ms->phases[0], inc, 0.12f + 0.2f * position) * position * 0.5f;
+        advance (ms->phases[0], inc);
 
-        s *= 1.0f + scratch * 1.5f * fastNoise;
-        s += scratch * 0.12f * (noise() - fastNoise);
+        s *= 1.0f + scratch * 1.5f * ms->fastNoise;
+        s += scratch * 0.12f * (noise() - ms->fastNoise);
 
-        reedLp += (s - reedLp) * mc.brightCoeff;
-        const float resonances = bands[0].process (reedLp) * 1.2f + bands[1].process (reedLp) * 1.4f + bands[2].process (reedLp) * 1.1f;
-        return (reedLp * (1.0f - 0.55f * body) + resonances * body) * mc.level;
+        ms->reedLp += (s - ms->reedLp) * mc.brightCoeff;
+        const float resonances = ms->bands[0].process (ms->reedLp) * 1.2f + ms->bands[1].process (ms->reedLp) * 1.4f + ms->bands[2].process (ms->reedLp) * 1.1f;
+        return (ms->reedLp * (1.0f - 0.55f * body) + resonances * body) * mc.level;
     }
 
-    /** Tambura: a pair of metal strings plucked with a pick. Each string is a delay line one
+    /** Tambura: a pair of metal ms->strings plucked with a pick. Each string is a delay line one
         period long that feeds back through a gentle low-pass, so high harmonics die first. */
     float renderTambura (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
     {
         float excite = 0.0f;
-        if (exciteLeft > 0)
+        if (ms->exciteLeft > 0)
         {
-            exciteLp += (noise() - exciteLp) * mc.fastCoeff;
-            excite = exciteLp * 1.4f;
-            --exciteLeft;
+            ms->exciteLp += (noise() - ms->exciteLp) * mc.fastCoeff;
+            excite = ms->exciteLp * 1.4f;
+            --ms->exciteLeft;
         }
 
         // The low-pass in the loop delays the wave a little; shorten the string to stay in tune.
         const float filterDelay = (1.0f - mc.brightCoeff) / mc.brightCoeff;
         const float second = p.macro[2] > 0.001f ? 0.8f : 0.0f;
 
-        float s = strings[0].process (sr / midiToHz (pitch - mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
+        float s = ms->strings[0].process (sr / midiToHz (pitch - mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
         if (second > 0.0f)
-            s += second * strings[1].process (sr / midiToHz (pitch + mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
+            s += second * ms->strings[1].process (sr / midiToHz (pitch + mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
 
         // The pluck leaves a constant offset circulating in the string; keep it out of the output.
-        slowNoise += (s - slowNoise) * mc.slowCoeff;
-        s -= slowNoise;
+        ms->slowNoise += (s - ms->slowNoise) * mc.slowCoeff;
+        s -= ms->slowNoise;
 
-        const float body = bands[0].process (s) * 0.5f + bands[1].process (s) * 0.35f;
+        const float body = ms->bands[0].process (s) * 0.5f + ms->bands[1].process (s) * 0.35f;
         return (s * 0.75f + body) * mc.level;
     }
 
-    /** Sargija: a long-necked lute with thin metal strings. The tune is played on one string
+    /** Sargija: a long-necked lute with thin metal ms->strings. The tune is played on one string
         while another rings along as a drone on the root of the scale. */
     float renderSargija (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
     {
         float excite = 0.0f;
-        if (exciteLeft > 0)
+        if (ms->exciteLeft > 0)
         {
-            exciteLp += (noise() - exciteLp) * mc.fastCoeff;
-            excite = exciteLp * 1.4f;
-            --exciteLeft;
+            ms->exciteLp += (noise() - ms->exciteLp) * mc.fastCoeff;
+            excite = ms->exciteLp * 1.4f;
+            --ms->exciteLeft;
         }
 
         const float filterDelay = (1.0f - mc.brightCoeff) / mc.brightCoeff;
-        float s = strings[0].process (sr / midiToHz (pitch) - filterDelay, excite, mc.brightCoeff, mc.loss);
+        float s = ms->strings[0].process (sr / midiToHz (pitch) - filterDelay, excite, mc.brightCoeff, mc.loss);
 
         if (p.macro[2] > 0.001f)
         {
             // The drone: the scale root in the octave below middle C, with a longer ring.
             const float dronePitch = 48.0f + (float) p.scaleRoot;
-            s += p.macro[2] * 0.8f * strings[1].process (sr / midiToHz (dronePitch) - filterDelay, excite * 0.7f, mc.brightCoeff,
+            s += p.macro[2] * 0.8f * ms->strings[1].process (sr / midiToHz (dronePitch) - filterDelay, excite * 0.7f, mc.brightCoeff,
                                                             0.5f + 0.5f * mc.loss);
         }
 
-        slowNoise += (s - slowNoise) * mc.slowCoeff;
-        s -= slowNoise;
+        ms->slowNoise += (s - ms->slowNoise) * mc.slowCoeff;
+        s -= ms->slowNoise;
 
-        const float body = bands[0].process (s) * 0.4f + bands[1].process (s) * 0.5f;
+        const float body = ms->bands[0].process (s) * 0.4f + ms->bands[1].process (s) * 0.5f;
         return (s * 0.7f + body) * mc.level;
     }
 
-    /** Kanun: a plucked zither with several strings per note. Bright and long ringing; the
+    /** Kanun: a plucked zither with several ms->strings per note. Bright and long ringing; the
         tremolo control picks the note again and again while it is held. */
     float renderKanun (float pitch, float sr, const EngineParams& p, const ModelCoeffs& mc) noexcept
     {
         const float tremolo = p.macro[3];
 
-        drumTime += 1.0f / sr;
-        if (tremolo > 0.02f && held && drumTime >= 1.0f / (6.0f + 12.0f * tremolo))
+        ms->drumTime += 1.0f / sr;
+        if (tremolo > 0.02f && held && ms->drumTime >= 1.0f / (6.0f + 12.0f * tremolo))
         {
-            drumTime = 0.0f;
-            exciteLeft = juce::jmax (2, (int) (sr / midiToHz (pitch)));
+            ms->drumTime = 0.0f;
+            ms->exciteLeft = juce::jmax (2, (int) (sr / midiToHz (pitch)));
         }
 
         float excite = 0.0f;
-        if (exciteLeft > 0)
+        if (ms->exciteLeft > 0)
         {
-            exciteLp += (noise() - exciteLp) * mc.fastCoeff;
-            excite = exciteLp * 1.3f;
-            --exciteLeft;
+            ms->exciteLp += (noise() - ms->exciteLp) * mc.fastCoeff;
+            excite = ms->exciteLp * 1.3f;
+            --ms->exciteLeft;
         }
 
         const float filterDelay = (1.0f - mc.brightCoeff) / mc.brightCoeff;
-        float s = strings[0].process (sr / midiToHz (pitch - mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss)
-                  + 0.8f * strings[1].process (sr / midiToHz (pitch + mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
+        float s = ms->strings[0].process (sr / midiToHz (pitch - mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss)
+                  + 0.8f * ms->strings[1].process (sr / midiToHz (pitch + mc.detune) - filterDelay, excite, mc.brightCoeff, mc.loss);
 
-        slowNoise += (s - slowNoise) * mc.slowCoeff;
-        s -= slowNoise;
+        ms->slowNoise += (s - ms->slowNoise) * mc.slowCoeff;
+        s -= ms->slowNoise;
 
-        const float body = bands[0].process (s) * 0.3f + bands[1].process (s) * 0.45f;
+        const float body = ms->bands[0].process (s) * 0.3f + ms->bands[1].process (s) * 0.45f;
         return (s * 0.6f + body) * mc.level;
     }
 
@@ -1447,33 +1506,33 @@ private:
         const float strike = p.macro[0], snap = p.macro[1], ring = p.macro[3];
         const float twoPi = juce::MathConstants<float>::twoPi;
 
-        if (drumTime <= 0.0f)
+        if (ms->drumTime <= 0.0f)
         {
-            drumEnv = 1.0f;
-            drumDrop = 1.0f;
-            clickEnv = 1.0f;
+            ms->drumEnv = 1.0f;
+            ms->drumDrop = 1.0f;
+            ms->clickEnv = 1.0f;
         }
-        drumTime += 1.0f / sr;
+        ms->drumTime += 1.0f / sr;
 
-        const float inc = midiToHz (pitch + drumDrop * 3.0f) / sr;
-        const float low = std::sin (drumPhase[0] * twoPi);
-        const float high = std::sin (drumPhase[1] * twoPi) + 0.6f * std::sin (phases[0] * twoPi);
-        advance (drumPhase[0], inc);
-        advance (drumPhase[1], juce::jmin (0.45f, inc * 2.3f));
-        advance (phases[0], juce::jmin (0.45f, inc * 3.6f));
+        const float inc = midiToHz (pitch + ms->drumDrop * 3.0f) / sr;
+        const float low = std::sin (ms->drumPhase[0] * twoPi);
+        const float high = std::sin (ms->drumPhase[1] * twoPi) + 0.6f * std::sin (ms->phases[0] * twoPi);
+        advance (ms->drumPhase[0], inc);
+        advance (ms->drumPhase[1], juce::jmin (0.45f, inc * 2.3f));
+        advance (ms->phases[0], juce::jmin (0.45f, inc * 3.6f));
 
         // The rim modes die much faster than the middle of the skin unless the shell rings.
-        const float highEnv = std::pow (drumEnv, 3.5f - 2.5f * ring);
-        float s = low * drumEnv * (1.0f - 0.85f * strike) + high * highEnv * (0.15f + 0.6f * strike);
-        s *= juce::jmin (1.0f, drumTime * 1500.0f);
+        const float highEnv = std::pow (ms->drumEnv, 3.5f - 2.5f * ring);
+        float s = low * ms->drumEnv * (1.0f - 0.85f * strike) + high * highEnv * (0.15f + 0.6f * strike);
+        s *= juce::jmin (1.0f, ms->drumTime * 1500.0f);
 
         const float white = noise();
-        const float slap = (bands[0].process (white) + bands[1].process (white) * (0.3f + strike)) * clickEnv * snap * (0.5f + strike)
+        const float slap = (ms->bands[0].process (white) + ms->bands[1].process (white) * (0.3f + strike)) * ms->clickEnv * snap * (0.5f + strike)
                            * (0.4f + 0.8f * velocity);
 
-        drumEnv *= mc.loss;
-        drumDrop *= mc.slowCoeff;
-        clickEnv *= mc.clickDecay;
+        ms->drumEnv *= mc.loss;
+        ms->drumDrop *= mc.slowCoeff;
+        ms->clickEnv *= mc.clickDecay;
         return (s + slap) * mc.level;
     }
 
@@ -1483,17 +1542,17 @@ private:
     {
         const float breath = p.macro[1];
 
-        slowNoise += (noise() - slowNoise) * mc.slowCoeff;
-        fastNoise += (noise() - fastNoise) * mc.fastCoeff;
+        ms->slowNoise += (noise() - ms->slowNoise) * mc.slowCoeff;
+        ms->fastNoise += (noise() - ms->fastNoise) * mc.fastCoeff;
 
-        const float inc = midiToHz (pitch + slowNoise * 4.0f) / sr;
-        float s = saw (phases[0], inc) * 0.7f + pulse (phases[0], inc, 0.3f) * 0.4f;
-        advance (phases[0], inc);
+        const float inc = midiToHz (pitch + ms->slowNoise * 4.0f) / sr;
+        float s = saw (ms->phases[0], inc) * 0.7f + pulse (ms->phases[0], inc, 0.3f) * 0.4f;
+        advance (ms->phases[0], inc);
 
-        reedLp += (s - reedLp) * mc.brightCoeff;
-        const float source = reedLp * (1.0f - 0.5f * breath) + fastNoise * breath * 1.2f;
+        ms->reedLp += (s - ms->reedLp) * mc.brightCoeff;
+        const float source = ms->reedLp * (1.0f - 0.5f * breath) + ms->fastNoise * breath * 1.2f;
 
-        const float mouth = bands[0].process (source) * 1.0f + bands[1].process (source) * 0.7f + bands[2].process (source) * 0.45f;
+        const float mouth = ms->bands[0].process (source) * 1.0f + ms->bands[1].process (source) * 0.7f + ms->bands[2].process (source) * 0.45f;
         return (mouth + source * 0.08f) * mc.level;
     }
 
@@ -1504,28 +1563,28 @@ private:
         const float thump = p.macro[0], snap = p.macro[1], ring = p.macro[3];
         const float twoPi = juce::MathConstants<float>::twoPi;
 
-        if (drumTime <= 0.0f)
+        if (ms->drumTime <= 0.0f)
         {
-            drumEnv = 1.0f;
-            drumDrop = 1.0f;
-            clickEnv = 1.0f;
+            ms->drumEnv = 1.0f;
+            ms->drumDrop = 1.0f;
+            ms->clickEnv = 1.0f;
         }
-        drumTime += 1.0f / sr;
+        ms->drumTime += 1.0f / sr;
 
-        const float inc = midiToHz (pitch + drumDrop * (4.0f + 14.0f * thump)) / sr;
-        float s = std::sin (drumPhase[0] * twoPi) + ring * 0.5f * std::sin (drumPhase[1] * twoPi);
-        advance (drumPhase[0], inc);
-        advance (drumPhase[1], juce::jmin (0.45f, inc * 1.59f));
+        const float inc = midiToHz (pitch + ms->drumDrop * (4.0f + 14.0f * thump)) / sr;
+        float s = std::sin (ms->drumPhase[0] * twoPi) + ring * 0.5f * std::sin (ms->drumPhase[1] * twoPi);
+        advance (ms->drumPhase[0], inc);
+        advance (ms->drumPhase[1], juce::jmin (0.45f, inc * 1.59f));
 
         // Soft attack of a few milliseconds, so the thump does not click.
-        s *= drumEnv * juce::jmin (1.0f, drumTime * 600.0f);
+        s *= ms->drumEnv * juce::jmin (1.0f, ms->drumTime * 600.0f);
 
         const float white = noise();
-        const float crack = (bands[0].process (white) + bands[1].process (white) * 0.6f) * clickEnv * snap * (0.4f + 0.8f * velocity);
+        const float crack = (ms->bands[0].process (white) + ms->bands[1].process (white) * 0.6f) * ms->clickEnv * snap * (0.4f + 0.8f * velocity);
 
-        drumEnv *= mc.loss;
-        drumDrop *= mc.slowCoeff;
-        clickEnv *= mc.clickDecay;
+        ms->drumEnv *= mc.loss;
+        ms->drumDrop *= mc.slowCoeff;
+        ms->clickEnv *= mc.clickDecay;
         return (s + crack) * mc.level;
     }
 
@@ -1585,22 +1644,30 @@ private:
     float velocity = 1.0f;
     juce::uint64 age = 0;
     float currentPitch = 60.0f, targetPitch = 60.0f;
-    std::array<float, 5> phases { 0.0f, 0.37f, 0.71f, 0.13f, 0.52f };
     float vibPhase = 0.0f, vibTime = 0.0f;
 
     Ornament ornament = Ornament::none;
     bool fall = false;
     float stepAbove = 1.0f, ornTime = 0.0f, releaseTime = 0.0f;
 
-    float reedLp = 0.0f, clickEnv = 0.0f, clickLp = 0.0f, clickHp = 0.0f;
-    float slowNoise = 0.0f, fastNoise = 0.0f;
-    std::array<Band, 3> bands;
+    /** Everything a Balkan model remembers from one sample to the next. A voice has one of these
+        for every copy of the unison stack. */
+    struct ModelState
+    {
+        std::array<float, 5> phases { 0.0f, 0.37f, 0.71f, 0.13f, 0.52f };
+        float reedLp = 0.0f, clickEnv = 0.0f, clickLp = 0.0f, clickHp = 0.0f;
+        float slowNoise = 0.0f, fastNoise = 0.0f;
+        std::array<Band, 3> bands;
 
-    std::array<StringLine, 2> strings;
-    int exciteLeft = 0;
-    float exciteLp = 0.0f;
-    std::array<float, 2> drumPhase {};
-    float drumTime = 0.0f, drumEnv = 0.0f, drumDrop = 0.0f;
+        std::array<StringLine, 2> strings;
+        int exciteLeft = 0;
+        float exciteLp = 0.0f;
+        std::array<float, 2> drumPhase {};
+        float drumTime = 0.0f, drumEnv = 0.0f, drumDrop = 0.0f;
+    };
+
+    std::array<ModelState, maxStack> modelStates;
+    ModelState* ms = nullptr; // the copy the model functions work on; set before every use
 
     OscPhases oscPhasesA {}, oscPhasesB {};
     float lastOscA = 0.0f;

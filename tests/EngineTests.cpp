@@ -1025,6 +1025,108 @@ int main()
             check (wide > 0.3f && near (narrow, 0.0f, 1.0e-6f) && near (single, 0.0f, 1.0e-6f), "unison width spreads the copies, a single copy stays centred");
         }
 
+        // The stack of the Balkan model: a unison that spreads, and chords from one key.
+        {
+            check (near (stack::position (0, 1), 0.0f) && near (stack::position (0, 3), 0.0f) && near (stack::position (1, 3), -1.0f)
+                       && near (stack::position (2, 3), 1.0f) && near (stack::position (0, 2), -1.0f) && near (stack::position (1, 2), 1.0f)
+                       && near (stack::position (0, 4), -1.0f / 3.0f) && near (stack::position (3, 4), 1.0f) && near (stack::position (4, 5), 1.0f)
+                       && near (stack::position (1, 5), -0.5f),
+                   "the copies of a stack go outwards from the middle");
+
+            struct Heard
+            {
+                float rms = 0.0f, difference = 0.0f, third = 0.0f, minorThird = 0.0f;
+                bool finite = true;
+            };
+
+            // Plays A3 and listens for the level, the difference between the sides and the two thirds above the note.
+            const auto hear = [] (Model model, int copies, int mode, float detune, float spread)
+            {
+                SynthEngine engine;
+                engine.prepare (48000.0, 512);
+                engine.setRandomSeed (3);
+                EngineParams w;
+                w.model = model;
+                w.vibDepthCents = 0.0f;
+                w.cutoffHz = 18000.0f;
+                w.stackCount = copies;
+                w.stackMode = mode;
+                w.stackDetuneCents = detune;
+                w.stackSpread = spread;
+                engine.setParams (w);
+
+                Heard h;
+                double sum = 0.0, re[2] {}, im[2] {};
+                const double freqs[2] { 220.0 * std::exp2 (4.0 / 12.0), 220.0 * std::exp2 (3.0 / 12.0) };
+                int count = 0;
+
+                for (int block = 0; block < 90; ++block)
+                {
+                    juce::MidiBuffer midi;
+                    if (block == 0)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 0);
+                    juce::AudioBuffer<float> buffer (2, 512);
+                    buffer.clear();
+                    engine.process (buffer, midi);
+
+                    for (int i = 0; i < 512 && block >= 10; ++i)
+                    {
+                        const float l = buffer.getSample (0, i), r = buffer.getSample (1, i);
+                        h.finite = h.finite && std::isfinite (l) && std::isfinite (r);
+                        sum += 0.5 * (double) (l * l + r * r);
+                        h.difference = juce::jmax (h.difference, std::abs (l - r));
+
+                        for (int f = 0; f < 2; ++f)
+                        {
+                            const double angle = juce::MathConstants<double>::twoPi * freqs[f] * (double) count / 48000.0;
+                            re[f] += (double) (l + r) * std::cos (angle);
+                            im[f] += (double) (l + r) * std::sin (angle);
+                        }
+
+                        ++count;
+                    }
+                }
+
+                h.rms = (float) std::sqrt (sum / (double) count);
+                h.third = (float) (std::sqrt (re[0] * re[0] + im[0] * im[0]) / (double) count);
+                h.minorThird = (float) (std::sqrt (re[1] * re[1] + im[1] * im[1]) / (double) count);
+                return h;
+            };
+
+            const auto one = hear (Model::accordion, 1, stack::unison, 14.0f, 1.0f);
+            const auto five = hear (Model::accordion, 5, stack::unison, 14.0f, 1.0f);
+            const auto centred = hear (Model::accordion, 5, stack::unison, 14.0f, 0.0f);
+            std::printf ("      accordion: one copy rms %.4f, five copies rms %.4f, sides differ by %.4f (spread) and %.6f (centred)\n",
+                         (double) one.rms, (double) five.rms, (double) five.difference, (double) centred.difference);
+            check (one.finite && five.finite && one.rms > 0.01f && near (one.difference, 0.0f, 1.0e-6f), "a single copy of a model stays in the middle");
+            check (five.rms > 0.5f * one.rms && five.rms < 2.0f * one.rms, "a stack is about as loud as a single copy");
+            check (five.difference > 0.2f * five.rms && near (centred.difference, 0.0f, 1.0e-6f), "the spread puts the copies of a stack left and right");
+
+            const auto major = hear (Model::accordion, 3, stack::majorChord, 0.0f, 0.5f);
+            const auto minor = hear (Model::accordion, 3, stack::minorChord, 0.0f, 0.5f);
+            const auto fifth = hear (Model::accordion, 2, stack::majorChord, 0.0f, 0.5f);
+            std::printf ("      major third %.5f in major, %.5f in minor, %.5f alone; minor third %.5f in minor, %.5f in major\n",
+                         (double) major.third, (double) minor.third, (double) one.third, (double) minor.minorThird, (double) major.minorThird);
+            check (major.third > 10.0f * one.third && major.third > 10.0f * minor.third && minor.minorThird > 10.0f * major.minorThird
+                       && fifth.third < 0.1f * major.third,
+                   "a chord stack plays its third from one key");
+
+            bool allFine = true;
+            for (int m = 0; m <= (int) Model::voice; ++m)
+            {
+                const auto single = hear ((Model) m, 1, stack::unison, 14.0f, 1.0f);
+                const auto stacked = hear ((Model) m, 5, stack::fifths, 20.0f, 1.0f);
+                const bool drum = isDrum ((Model) m);
+                const bool fine = stacked.finite && (drum ? near (stacked.difference, 0.0f, 1.0e-6f) && near (stacked.rms, single.rms, 0.15f * single.rms)
+                                                          : stacked.rms > 0.25f * single.rms && stacked.rms < 2.5f * single.rms);
+                if (! fine)
+                    std::printf ("      model %d: single rms %.5f, stacked rms %.5f, difference %.5f\n", m, (double) single.rms, (double) stacked.rms,
+                                 (double) stacked.difference);
+                allFine = allFine && fine;
+            }
+            check (allFine, "every model can be stacked, and the drums stay single");
+        }
+
         base.oscA.level = 0.5f;
         const auto layered = render (base);
         check (layered.finite && ! near (layered.peak, reference.peak, 1.0e-4f), "oscillators layer with the Balkan engine");

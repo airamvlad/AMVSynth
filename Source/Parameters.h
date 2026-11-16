@@ -200,6 +200,10 @@ inline constexpr auto fltS = "fltSustain";
 inline constexpr auto fltR = "fltRelease";
 inline constexpr auto level = "level";
 inline constexpr auto engineLevel = "engineLevel";
+inline constexpr auto engineStack = "engineStack";
+inline constexpr auto engineStackMode = "engineStackMode";
+inline constexpr auto engineStackDetune = "engineStackDetune";
+inline constexpr auto engineStackSpread = "engineStackSpread";
 inline constexpr auto oscATable = "oscATable";
 inline constexpr auto oscAPos = "oscAPosition";
 inline constexpr auto oscAUnison = "oscAUnison";
@@ -475,6 +479,15 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     tableNames.add ("User"); // the wavetable imported for that oscillator
 
     add (id::engineLevel, "Engine Level", Range (0.0f, 1.0f), 1.0f);
+
+    // Copies of the Balkan model per note: a detuned unison, or the notes of a chord.
+    juce::StringArray stackModes;
+    for (const auto* n : getStackModes())
+        stackModes.add (n);
+    add (id::engineStack, "Engine Stack", Range (1.0f, (float) stack::maxCopies, 1.0f), 1.0f);
+    addChoice (id::engineStackMode, "Engine Stack Mode", stackModes, 0);
+    add (id::engineStackDetune, "Engine Stack Detune", Range (0.0f, 60.0f), 14.0f, "ct");
+    add (id::engineStackSpread, "Engine Stack Spread", Range (0.0f, 1.0f), 0.5f);
 
     addChoice (id::oscATable, "Osc A Table", tableNames, 0);
     add (id::oscAPos, "Osc A Position", Range (0.0f, 1.0f), 0.66f);

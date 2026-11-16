@@ -99,6 +99,10 @@ amv::EngineParams AMVSynthAudioProcessor::readParams() const
 
     p.engineRange = engineRanges[(size_t) juce::jlimit (0, (int) engineRanges.size() - 1, (int) p.model)];
     p.engineLevel = value (id::engineLevel);
+    p.stackCount = juce::roundToInt (value (id::engineStack));
+    p.stackMode = juce::roundToInt (value (id::engineStackMode));
+    p.stackDetuneCents = value (id::engineStackDetune);
+    p.stackSpread = value (id::engineStackSpread);
     p.oscA = { juce::roundToInt (value (id::oscATable)), value (id::oscAPos), juce::roundToInt (value (id::oscAUnison)),
                value (id::oscADetune), value (id::oscAPitch), value (id::oscAFine), value (id::oscALevel), value (id::oscAWidth) };
     p.oscB = { juce::roundToInt (value (id::oscBTable)), value (id::oscBPos), juce::roundToInt (value (id::oscBUnison)),
