@@ -1,5 +1,6 @@
 // Plays every factory preset through the real plugin processor. Exits non-zero on failure.
 #include "PluginProcessor.h"
+#include "PresetBrowser.h"
 
 #include <cstdio>
 
@@ -204,6 +205,66 @@ int main()
         std::printf ("%s  a sample is loaded, saved with the project (state is %d KB) and removed again\n", ok ? "ok  " : "FAIL", kb);
         failures += ok ? 0 : 1;
         file.deleteFile();
+    }
+
+    // A factory preset brings its sequence and its drawn LFO shape, and the next preset takes them away again.
+    {
+        std::unique_ptr<juce::AudioProcessor> p (createPluginFilter());
+        auto* synth = dynamic_cast<AMVSynthAudioProcessor*> (p.get());
+        const auto& presets = amv::getFactoryPresets();
+        int withSequence = -1, withShape = -1;
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            if (withSequence < 0 && ! presets[i].sequence.empty())
+                withSequence = (int) i;
+            if (withShape < 0 && ! presets[i].lfoShapes.empty())
+                withShape = (int) i;
+        }
+
+        bool ok = withSequence > 0 && withShape > 0;
+        if (ok)
+        {
+            const auto& sequence = presets[(size_t) withSequence].sequence;
+            p->setCurrentProgram (withSequence);
+            bool same = synth->apvts.getRawParameterValue (amv::id::seqOn)->load() > 0.5f;
+            for (size_t i = 0; i < sequence.size(); ++i)
+                same = same && synth->getSeqPattern().steps[i].note == sequence[i].note && synth->getSeqPattern().steps[i].slide == sequence[i].slide;
+
+            const auto& [lfo, points] = presets[(size_t) withShape].lfoShapes.front();
+            p->setCurrentProgram (withShape);
+            const bool shaped = synth->getLfoPoints (lfo).size() == points.size();
+
+            p->setCurrentProgram (0);
+            bool cleared = synth->getLfoPoints (lfo).size() == 2;
+            for (const auto& step : synth->getSeqPattern().steps)
+                cleared = cleared && step.note == 0 && ! step.slide;
+
+            ok = same && shaped && cleared;
+        }
+
+        std::printf ("%s  a factory preset sets its sequence and LFO shape, and Init clears them\n", ok ? "ok  " : "FAIL");
+        failures += ok ? 0 : 1;
+    }
+
+    // The browser lists by category, by favourites and by the words in the search box.
+    {
+        using Entry = PresetBrowser::Entry;
+        const std::vector<Entry> all { { "Psy Bass", "Bass", 1, {} }, { "Kaval Pad", "Pad", 2, {} }, { "Acid Kolo 7/8 Seq", "Sequence", 3, {} },
+                                       { "My Bass", "User", -1, juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("My Bass.amvpreset") } };
+        const juce::StringArray favourites { all[1].key(), all[3].key() };
+        const auto names = [&] (const juce::String& category, const juce::String& search)
+        {
+            juce::StringArray result;
+            for (const auto& e : PresetBrowser::filter (all, category, search, favourites))
+                result.add (e.name);
+            return result.joinIntoString ("|");
+        };
+
+        const bool ok = names ("All", "") == "Psy Bass|Kaval Pad|Acid Kolo 7/8 Seq|My Bass" && names ("Bass", "") == "Psy Bass" && names ("User", "") == "My Bass"
+                        && names ("Favourites", "") == "Kaval Pad|My Bass" && names ("All", "bass") == "Psy Bass|My Bass" && names ("All", "kolo 7/8") == "Acid Kolo 7/8 Seq"
+                        && names ("All", "sequence") == "Acid Kolo 7/8 Seq" && names ("Pad", "bass").isEmpty();
+        std::printf ("%s  the preset browser filters by category, favourites and search words\n", ok ? "ok  " : "FAIL");
+        failures += ok ? 0 : 1;
     }
 
     // The sequencer pattern is saved with the project, and the sequencer plays it.

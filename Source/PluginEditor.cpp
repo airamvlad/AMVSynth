@@ -592,7 +592,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     prevPreset.onClick = [this] { selectPreset ((juce::jmax (0, shownPreset) + processor.getNumPrograms() - 1) % processor.getNumPrograms()); };
     nextPreset.onClick = [this] { selectPreset ((shownPreset + 1) % processor.getNumPrograms()); };
 
-    const auto presetFolder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("AMVSynth Presets");
+    const auto presetFolder = PresetBrowser::userFolder();
     savePreset.onClick = [this, presetFolder]
     {
         presetFolder.createDirectory();
@@ -601,29 +601,37 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
                                   [this] (const juce::FileChooser& chooser)
                                   {
                                       const auto file = chooser.getResult();
-                                      if (file != juce::File())
-                                          processor.savePresetFile (file.withFileExtension ("amvpreset"));
+                                      if (file != juce::File() && processor.savePresetFile (file.withFileExtension ("amvpreset")))
+                                      {
+                                          // The saved preset is the one that is loaded now.
+                                          userPreset = file.withFileExtension ("amvpreset");
+                                          shownPreset = -1;
+                                          presetBox.setSelectedId (0, juce::dontSendNotification);
+                                          presetBox.setTextWhenNothingSelected (userPreset.getFileNameWithoutExtension());
+                                          browser.rescan();
+                                      }
                                   });
     };
-    loadPreset.onClick = [this, presetFolder]
+    browsePreset.setTooltip ("Open the preset browser: categories, search, favourites and your own presets.");
+    browsePreset.onClick = [this] { showBrowser (! browser.isVisible()); };
+    browser.onClose = [this] { showBrowser (false); };
+    browser.onChoose = [this] (const PresetBrowser::Entry& entry)
+    {
+        if (entry.program >= 0)
+            selectPreset (entry.program);
+        else
+            loadUserPreset (entry.file);
+    };
+    browser.onLoadFile = [this, presetFolder]
     {
         fileChooser = std::make_unique<juce::FileChooser> ("Load preset", presetFolder, "*.amvpreset");
         fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                                  [this] (const juce::FileChooser& chooser)
-                                  {
-                                      const auto file = chooser.getResult();
-                                      if (file.existsAsFile() && processor.loadPresetFile (file))
-                                      {
-                                          shownPreset = -1;
-                                          presetBox.setSelectedId (0, juce::dontSendNotification);
-                                          presetBox.setTextWhenNothingSelected (file.getFileNameWithoutExtension());
-                                      }
-                                  });
+                                  [this] (const juce::FileChooser& chooser) { loadUserPreset (chooser.getResult()); });
     };
 
     presetBox.setColour (juce::ComboBox::outlineColourId, colour::panelBorder);
     addAndMakeVisible (presetBox);
-    for (auto* button : { &prevPreset, &nextPreset, &savePreset, &loadPreset })
+    for (auto* button : { &prevPreset, &nextPreset, &savePreset, &browsePreset })
     {
         button->setColour (juce::TextButton::buttonColourId, colour::header);
         button->setColour (juce::TextButton::textColourOffId, colour::dimText);
@@ -636,6 +644,10 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, colour::red);
     keyboard.setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, colour::red.withAlpha (0.4f));
     addAndMakeVisible (keyboard);
+
+    browsePreset.setColour (juce::TextButton::buttonOnColourId, colour::track);
+    browsePreset.setColour (juce::TextButton::textColourOnId, colour::text);
+    addChildComponent (browser);
 
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (id::model)->load()));
     updateVisibility();
@@ -718,8 +730,36 @@ AMVSynthAudioProcessorEditor::Section& AMVSynthAudioProcessorEditor::addSection 
     return sections.back();
 }
 
+void AMVSynthAudioProcessorEditor::loadUserPreset (const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return;
+
+    if (! processor.loadPresetFile (file))
+    {
+        showStatus ("This file is not an AMVSynth preset.");
+        return;
+    }
+
+    userPreset = file;
+    shownPreset = -1;
+    presetBox.setSelectedId (0, juce::dontSendNotification);
+    presetBox.setTextWhenNothingSelected (file.getFileNameWithoutExtension());
+    browser.setCurrent (-1, userPreset);
+}
+
+void AMVSynthAudioProcessorEditor::showBrowser (bool show)
+{
+    browsePreset.setToggleState (show, juce::dontSendNotification);
+    browser.setCurrent (shownPreset, userPreset);
+    browser.setVisible (show);
+    if (show)
+        browser.toFront (true);
+}
+
 void AMVSynthAudioProcessorEditor::selectPreset (int index)
 {
+    userPreset = juce::File();
     shownPreset = index;
     processor.setCurrentProgram (index);
     presetBox.setSelectedId (index + 1, juce::dontSendNotification);
@@ -740,6 +780,7 @@ void AMVSynthAudioProcessorEditor::showModel (int index)
 void AMVSynthAudioProcessorEditor::setPage (int page)
 {
     currentPage = page;
+    showBrowser (false);
     for (size_t i = 0; i < tabs.size(); ++i)
         tabs[i].setToggleState (tabPages[i] == page, juce::dontSendNotification);
     resized();
@@ -798,7 +839,11 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     {
         shownPreset = processor.getCurrentProgram();
         presetBox.setSelectedId (shownPreset + 1, juce::dontSendNotification);
+        userPreset = juce::File();
     }
+
+    if (browser.isVisible())
+        browser.setCurrent (shownPreset, userPreset);
 
     // The model can also change from host automation or a loaded preset.
     showModel (juce::roundToInt (processor.apvts.getRawParameterValue (amv::id::model)->load()));
@@ -2318,7 +2363,7 @@ void AMVSynthAudioProcessorEditor::resized()
     // The preset bar fills the space between the logo and the tabs.
     headerArea.removeFromLeft (250);
     headerArea.removeFromRight (14);
-    loadPreset.setBounds (headerArea.removeFromRight (50));
+    browsePreset.setBounds (headerArea.removeFromRight (64));
     headerArea.removeFromRight (4);
     savePreset.setBounds (headerArea.removeFromRight (50));
     headerArea.removeFromRight (8);
@@ -2331,6 +2376,7 @@ void AMVSynthAudioProcessorEditor::resized()
     keyboard.setBounds (area.removeFromBottom (keyboardHeight));
     keyboard.setKeyWidth ((float) keyboard.getWidth() / 36.0f); // 36 white keys from C2 to C7
     area.reduce (margin, margin);
+    browser.setBounds (area);
 
     // The modulation sources sit above the panels on every page that has knobs to drop them on.
     // The wavetable editor lays out its own page.

@@ -1773,6 +1773,23 @@ int main()
             }
         }
         check (presets.size() >= 16 && unique, "factory presets have unique names");
+
+        bool listed = true, extras = true;
+        for (const auto& preset : presets)
+        {
+            bool known = juce::String (preset.category) == "Init";
+            for (const auto* category : getPresetCategories())
+                known = known || juce::String (preset.category) == category;
+            listed = listed && known;
+
+            extras = extras && preset.sequence.size() <= (size_t) SeqPattern::maxSteps;
+            for (const auto& step : preset.sequence)
+                extras = extras && std::abs (step.note) <= SeqPattern::noteRange && step.velocity > 0.0f && step.velocity <= 1.0f && step.gate >= 0.0f && step.gate <= 1.0f;
+            for (const auto& [lfo, points] : preset.lfoShapes)
+                extras = extras && lfo >= 0 && lfo < mod::numLfos && points.size() >= 2 && points.size() <= (size_t) LfoShape::maxPoints;
+        }
+        check (listed, "every factory preset is in a category the browser lists");
+        check (extras, "preset sequences and LFO shapes are in range");
         check (valid, "every preset value names a real parameter and is in range");
 
         // Applying a preset sets its values and resets everything else.
