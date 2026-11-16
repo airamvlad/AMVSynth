@@ -1117,8 +1117,10 @@ int main()
                 const auto single = hear ((Model) m, 1, stack::unison, 14.0f, 1.0f);
                 const auto stacked = hear ((Model) m, 5, stack::fifths, 20.0f, 1.0f);
                 const bool drum = isDrum ((Model) m);
+                // The copies of a fifths stack are other notes, and a plucked string an octave down rings
+                // longer, so the level is only held to a wide range here.
                 const bool fine = stacked.finite && (drum ? near (stacked.difference, 0.0f, 1.0e-6f) && near (stacked.rms, single.rms, 0.15f * single.rms)
-                                                          : stacked.rms > 0.25f * single.rms && stacked.rms < 2.5f * single.rms);
+                                                          : stacked.rms > 0.25f * single.rms && stacked.rms < 5.0f * single.rms);
                 if (! fine)
                     std::printf ("      model %d: single rms %.5f, stacked rms %.5f, difference %.5f\n", m, (double) single.rms, (double) stacked.rms,
                                  (double) stacked.difference);
