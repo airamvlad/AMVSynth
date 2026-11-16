@@ -510,44 +510,86 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         s.knobs = makeKnobs (false, { { id::slot (i, "Amount"), "AMOUNT" } });
     }
 
-    // FX page.
+    // FX page, from the top in the order the sound runs through it.
     buildingPage = 3;
     {
-        auto& s = addSection ("DISTORTION", false, 0, 4.0f);
+        auto& s = addSection ("COMPRESSOR", false, 0, 6.0f);
+        s.column.push_back (&makeToggle (id::compOn, "ON", false)->button);
+        s.columnWidth = 80;
+        s.knobs = makeKnobs (false, { { id::compThreshold, "THRESHOLD" }, { id::compRatio, "RATIO" }, { id::compAttack, "ATTACK" },
+                                      { id::compRelease, "RELEASE" }, { id::compMakeup, "MAKEUP" } });
+    }
+    {
+        auto& s = addSection ("BITCRUSHER", false, 0, 4.2f);
+        s.column.push_back (&makeToggle (id::crushOn, "ON", false)->button);
+        s.columnWidth = 80;
+        s.knobs = makeKnobs (false, { { id::crushBits, "BITS" }, { id::crushRate, "RATE" }, { id::crushMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("DISTORTION", false, 1, 4.0f);
         s.column.push_back (&makeToggle (id::distOn, "ON", false)->button);
         s.column.push_back (&makeChoice (id::distType, false)->box);
         s.knobs = makeKnobs (false, { { id::distDrive, "DRIVE" }, { id::distMix, "MIX" } });
     }
     {
-        auto& s = addSection ("TRANCE GATE", false, 0, 6.0f);
+        auto& s = addSection ("TRANCE GATE", false, 1, 6.0f);
         s.column.push_back (&makeToggle (id::gateOn, "ON", false)->button);
         s.column.push_back (&makeChoice (id::gateRate, false)->box);
         s.column.push_back (&makeChoice (id::gatePattern, false)->box);
+        s.columnsInColumn = 2;
+        s.columnWidth = 118;
         s.knobs = makeKnobs (false, { { id::gateDepth, "DEPTH" }, { id::gateLength, "LENGTH" }, { id::gateSmooth, "SMOOTH" } });
     }
     {
-        auto& s = addSection ("DELAY", false, 1, 6.0f);
+        auto& s = addSection ("CHORUS", false, 2, 3.6f);
+        s.column.push_back (&makeToggle (id::chorusOn, "ON", false)->button);
+        s.columnWidth = 70;
+        s.knobs = makeKnobs (false, { { id::chorusRate, "RATE" }, { id::chorusDepth, "DEPTH" }, { id::chorusMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("FLANGER", false, 2, 4.2f);
+        s.column.push_back (&makeToggle (id::flangerOn, "ON", false)->button);
+        s.columnWidth = 70;
+        s.knobs = makeKnobs (false, { { id::flangerRate, "RATE" }, { id::flangerDepth, "DEPTH" }, { id::flangerFeedback, "FEEDBACK" }, { id::flangerMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("PHASER", false, 2, 4.2f);
+        s.column.push_back (&makeToggle (id::phaserOn, "ON", false)->button);
+        s.columnWidth = 70;
+        s.knobs = makeKnobs (false, { { id::phaserRate, "RATE" }, { id::phaserDepth, "DEPTH" }, { id::phaserFeedback, "FEEDBACK" }, { id::phaserMix, "MIX" } });
+    }
+    {
+        auto& s = addSection ("DELAY", false, 3, 6.0f);
         s.column.push_back (&makeToggle (id::delayOn, "ON", false)->button);
         s.column.push_back (&makeChoice (id::delayTime, false)->box);
         s.column.push_back (&makeToggle (id::delayPingPong, "PING-PONG", false)->button);
+        s.columnsInColumn = 2;
+        s.columnWidth = 104;
         s.knobs = makeKnobs (false, { { id::delayFeedback, "FEEDBACK" }, { id::delayTone, "TONE" }, { id::delayMix, "MIX" } });
     }
     {
-        auto& s = addSection ("REVERB", false, 1, 5.0f);
+        auto& s = addSection ("REVERB", false, 3, 5.0f);
         s.column.push_back (&makeToggle (id::reverbOn, "ON", false)->button);
         s.knobs = makeKnobs (false, { { id::reverbSize, "SIZE" }, { id::reverbDamp, "DAMP" }, { id::reverbMix, "MIX" } });
     }
     {
-        auto& s = addSection ("KICK DUCK", false, 2, 4.0f);
+        auto& s = addSection ("EQ", false, 4, 5.0f);
+        s.column.push_back (&makeToggle (id::eqOn, "ON", false)->button);
+        s.columnWidth = 70;
+        s.knobs = makeKnobs (false, { { id::eqLow, "LOW" }, { id::eqMid, "MID" }, { id::eqMidFreq, "MID FREQ" }, { id::eqHigh, "HIGH" } });
+    }
+    {
+        auto& s = addSection ("KICK DUCK", false, 4, 3.4f);
         s.column.push_back (&makeToggle (id::duckOn, "ON", false)->button);
+        s.columnWidth = 70;
         s.knobs = makeKnobs (false, { { id::duckDepth, "DEPTH" }, { id::duckRelease, "RELEASE" } });
     }
     {
-        auto& s = addSection ("ROUTING", false, 2, 3.0f);
+        auto& s = addSection ("ROUTING", false, 4, 3.4f);
         s.column.push_back (&makeChoice (id::fxOrder, false)->box);
     }
     {
-        auto& s = addSection ("OUTPUT", false, 2, 4.0f);
+        auto& s = addSection ("OUTPUT", false, 4, 3.4f);
         s.display = &levelMeter;
         s.knobs = makeKnobs (false, { { id::level, "LEVEL" } });
         addChildComponent (levelMeter);
@@ -1252,8 +1294,8 @@ float AMVSynthAudioProcessorEditor::ModKnob::proportionWith (float x) const
         return param->convertTo0to1 (juce::jlimit (range.start, range.end, db));
     }
 
-    // Envelope times and the delay tone move by octaves.
-    if ((dest >= amv::mod::dstAmpAttack && dest <= amv::mod::dstFltRelease) || dest == amv::mod::dstDelayTone)
+    // Envelope times, the delay tone and the crush rate move by octaves.
+    if ((dest >= amv::mod::dstAmpAttack && dest <= amv::mod::dstFltRelease) || dest == amv::mod::dstDelayTone || dest == amv::mod::dstCrushRate)
         return param->convertTo0to1 (juce::jlimit (range.start, range.end, param->convertFrom0to1 (base) * std::exp2 (x * amv::mod::timeOctaves)));
 
     return juce::jlimit (0.0f, 1.0f, base + x);

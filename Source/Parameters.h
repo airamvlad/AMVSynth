@@ -121,6 +121,35 @@ inline constexpr auto duckOn = "duckOn";
 inline constexpr auto duckDepth = "duckDepth";
 inline constexpr auto duckRelease = "duckRelease";
 inline constexpr auto fxOrder = "fxOrder";
+inline constexpr auto compOn = "compOn";
+inline constexpr auto compThreshold = "compThreshold";
+inline constexpr auto compRatio = "compRatio";
+inline constexpr auto compAttack = "compAttack";
+inline constexpr auto compRelease = "compRelease";
+inline constexpr auto compMakeup = "compMakeup";
+inline constexpr auto crushOn = "crushOn";
+inline constexpr auto crushBits = "crushBits";
+inline constexpr auto crushRate = "crushRate";
+inline constexpr auto crushMix = "crushMix";
+inline constexpr auto chorusOn = "chorusOn";
+inline constexpr auto chorusRate = "chorusRate";
+inline constexpr auto chorusDepth = "chorusDepth";
+inline constexpr auto chorusMix = "chorusMix";
+inline constexpr auto flangerOn = "flangerOn";
+inline constexpr auto flangerRate = "flangerRate";
+inline constexpr auto flangerDepth = "flangerDepth";
+inline constexpr auto flangerFeedback = "flangerFeedback";
+inline constexpr auto flangerMix = "flangerMix";
+inline constexpr auto phaserOn = "phaserOn";
+inline constexpr auto phaserRate = "phaserRate";
+inline constexpr auto phaserDepth = "phaserDepth";
+inline constexpr auto phaserFeedback = "phaserFeedback";
+inline constexpr auto phaserMix = "phaserMix";
+inline constexpr auto eqOn = "eqOn";
+inline constexpr auto eqLow = "eqLow";
+inline constexpr auto eqMid = "eqMid";
+inline constexpr auto eqMidFreq = "eqMidFreq";
+inline constexpr auto eqHigh = "eqHigh";
 inline constexpr auto scaleRoot = "scaleRoot";
 inline constexpr auto scale = "scale";
 inline constexpr auto snap = "snap";
@@ -276,6 +305,8 @@ inline int modDestFor (const juce::String& paramId)
         { id::distDrive, mod::dstDistDrive }, { id::distMix, mod::dstDistMix }, { id::gateDepth, mod::dstGateDepth },
         { id::delayFeedback, mod::dstDelayFeedback }, { id::delayTone, mod::dstDelayTone }, { id::delayMix, mod::dstDelayMix },
         { id::reverbSize, mod::dstReverbSize }, { id::reverbMix, mod::dstReverbMix },
+        { id::crushRate, mod::dstCrushRate }, { id::chorusMix, mod::dstChorusMix }, { id::flangerMix, mod::dstFlangerMix },
+        { id::phaserMix, mod::dstPhaserMix },
         { id::filter2Cutoff, mod::dstCutoff2 }, { id::filter2Res, mod::dstResonance2 },
         { id::oscAXmodAmount, mod::dstOscAFm }, { id::oscBXmodAmount, mod::dstOscBFm },
         { id::engineLevel, mod::dstEngineLevel }, { id::noiseLevel, mod::dstNoiseLevel }, { id::subLevel, mod::dstSubLevel },
@@ -616,6 +647,41 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     addBool (id::duckOn, "Kick Duck On", false);
     add (id::duckDepth, "Kick Duck Depth", Range (0.0f, 100.0f), 80.0f, "%");
     add (id::duckRelease, "Kick Duck Release", Range (5.0f, 100.0f), 50.0f, "%");
+
+    addBool (id::compOn, "Compressor On", false);
+    add (id::compThreshold, "Compressor Threshold", Range (-48.0f, 0.0f), -18.0f, "dB");
+    add (id::compRatio, "Compressor Ratio", skewed (1.0f, 20.0f, 4.0f), 4.0f);
+    add (id::compAttack, "Compressor Attack", skewed (0.1f, 100.0f, 10.0f), 10.0f, "ms");
+    add (id::compRelease, "Compressor Release", skewed (10.0f, 1000.0f, 150.0f), 120.0f, "ms");
+    add (id::compMakeup, "Compressor Makeup", Range (0.0f, 24.0f), 0.0f, "dB");
+
+    addBool (id::crushOn, "Bitcrusher On", false);
+    add (id::crushBits, "Bitcrusher Bits", Range (1.0f, 16.0f), 8.0f);
+    add (id::crushRate, "Bitcrusher Rate", skewed (200.0f, 40000.0f, 4000.0f), 8000.0f, "Hz");
+    add (id::crushMix, "Bitcrusher Mix", Range (0.0f, 100.0f), 100.0f, "%");
+
+    addBool (id::chorusOn, "Chorus On", false);
+    add (id::chorusRate, "Chorus Rate", skewed (0.05f, 8.0f, 1.0f), 0.6f, "Hz");
+    add (id::chorusDepth, "Chorus Depth", Range (0.0f, 100.0f), 50.0f, "%");
+    add (id::chorusMix, "Chorus Mix", Range (0.0f, 100.0f), 50.0f, "%");
+
+    addBool (id::flangerOn, "Flanger On", false);
+    add (id::flangerRate, "Flanger Rate", skewed (0.02f, 5.0f, 0.5f), 0.25f, "Hz");
+    add (id::flangerDepth, "Flanger Depth", Range (0.0f, 100.0f), 60.0f, "%");
+    add (id::flangerFeedback, "Flanger Feedback", Range (-95.0f, 95.0f), 50.0f, "%");
+    add (id::flangerMix, "Flanger Mix", Range (0.0f, 100.0f), 50.0f, "%");
+
+    addBool (id::phaserOn, "Phaser On", false);
+    add (id::phaserRate, "Phaser Rate", skewed (0.02f, 8.0f, 0.8f), 0.4f, "Hz");
+    add (id::phaserDepth, "Phaser Depth", Range (0.0f, 100.0f), 70.0f, "%");
+    add (id::phaserFeedback, "Phaser Feedback", Range (0.0f, 95.0f), 50.0f, "%");
+    add (id::phaserMix, "Phaser Mix", Range (0.0f, 100.0f), 50.0f, "%");
+
+    addBool (id::eqOn, "EQ On", false);
+    add (id::eqLow, "EQ Low", Range (-15.0f, 15.0f), 0.0f, "dB");
+    add (id::eqMid, "EQ Mid", Range (-15.0f, 15.0f), 0.0f, "dB");
+    add (id::eqMidFreq, "EQ Mid Frequency", skewed (200.0f, 8000.0f, 1200.0f), 1000.0f, "Hz");
+    add (id::eqHigh, "EQ High", Range (-15.0f, 15.0f), 0.0f, "dB");
 
     // Scale
     juce::StringArray roots, scaleNames;

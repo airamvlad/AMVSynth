@@ -82,6 +82,10 @@ enum Dest
     dstResonance2,
     dstOscAFm,
     dstOscBFm,
+    dstCrushRate, // more of the effects
+    dstChorusMix,
+    dstFlangerMix,
+    dstPhaserMix,
     numDests
 };
 
@@ -114,7 +118,7 @@ inline bool isBipolarSource (int source) noexcept
     that belong to a note, the newest note. */
 inline bool isGlobalDest (int dest) noexcept
 {
-    return dest >= dstDistDrive && dest <= dstReverbMix;
+    return (dest >= dstDistDrive && dest <= dstReverbMix) || (dest >= dstCrushRate && dest <= dstPhaserMix);
 }
 
 /** How far a full modulation moves an envelope time or a tone control, in octaves. */
@@ -217,7 +221,7 @@ inline const std::array<const char*, mod::numDests>& getModDests()
                                                                 "Amp Attack", "Amp Decay", "Amp Release", "Filter Attack", "Filter Decay", "Filter Release",
                                                                 "Distortion Drive", "Distortion Mix", "Gate Depth", "Delay Feedback", "Delay Tone",
                                                                 "Delay Mix", "Reverb Size", "Reverb Mix", "Filter 2 Cutoff", "Filter 2 Resonance",
-                                                                "Osc A FM/Ring", "Osc B FM/Ring" };
+                                                                "Osc A FM/Ring", "Osc B FM/Ring", "Crush Rate", "Chorus Mix", "Flanger Mix", "Phaser Mix" };
     return names;
 }
 

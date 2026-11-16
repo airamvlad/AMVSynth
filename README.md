@@ -10,7 +10,7 @@ What it does:
 - Each modulation is unipolar or bipolar: Auto keeps LFOs swinging both ways and everything else one way, and you can force either from the MOD page or the right-click menu of a knob
 - Four LFOs with a shape editor: set an LFO to Custom and draw it with points and curves on a 16-step grid, or start from stairs, a sidechain pump or random steps. Each LFO runs free, retriggers with every note, or runs once like an envelope
 - A third envelope (ENV 3) that is only a modulation source
-- Envelope times and the effects are modulation destinations too: amp and filter attack, decay and release, distortion drive and mix, gate depth, delay feedback, tone and mix, reverb size and mix
+- Envelope times and the effects are modulation destinations too: amp and filter attack, decay and release, distortion drive and mix, gate depth, delay feedback, tone and mix, reverb size and mix, the bitcrusher rate and the chorus, flanger and phaser mix
 - Warp on both wavetable oscillators (Bend +, Bend -, PWM, Sync, Mirror) with a WARP knob that can be modulated, and a 3D view of all frames of the table with the playing position marked
 - FM, ring and amplitude modulation of each wavetable oscillator by the other oscillator, the sub, the noise, the Balkan engine or the sampler. The modulator works even with its own level turned down, and the amount is a modulation destination
 - Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
@@ -22,7 +22,7 @@ What it does:
   - A slide glides into the next step in Mono Legato, and ties two steps with the same note into one long note
   - Swing, a gate scale, latch, and a free cycle mode that lets an odd pattern run over a 4/4 bar, or restart on every bar
   - Pattern tools: accents from the meter, random notes from the chosen scale, shift, reverse and clear. The pattern is saved with the project and in preset files
-- Effects on their own page: distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, tempo-synced ping-pong delay, reverb, kick duck and an output limiter, with a choice of effect order and an output level meter
+- Twelve effects on their own page, laid out in the order the sound runs through them: compressor, bitcrusher, distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, chorus, flanger, phaser, tempo-synced ping-pong delay, reverb, three-band EQ with a movable mid band, kick duck and an output limiter, with a choice of order for distortion, gate, delay and reverb and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Pythagorean tuning (all twelve keys from pure fifths on the chosen root) in the same scale list
 - Wavetable editor on the WAVE page: draw each of the 16 frames by hand (free or on a step grid), build it from 48 harmonic bars, start from basic shapes or a copy of a built-in table, smooth, normalize, invert, reverse, copy and paste frames, fill the table, morph from the first frame to the selected one, undo, and export the result as a WAV

@@ -547,6 +547,156 @@ int main()
             check (ok && peak > 0.05f && peak <= 1.0f, "all effects at extreme settings stay finite and under full scale");
         }
 
+        // The newer effects. The level is taken from the last blocks, when everything has settled.
+        {
+            const auto measure = [&] (FxParams p, float& difference)
+            {
+                float peak = 0.0f;
+                difference = 0.0f;
+                run (p, 100, false, [&] (int b, const juce::AudioBuffer<float>& buf)
+                {
+                    if (b >= 80)
+                    {
+                        peak = juce::jmax (peak, buf.getMagnitude (0, 0, block));
+                        for (int i = 0; i < block; ++i)
+                            difference = juce::jmax (difference, std::abs (buf.getSample (0, i) - buf.getSample (1, i)));
+                    }
+                });
+                return peak;
+            };
+
+            float side = 0.0f;
+            const float dry = measure (FxParams(), side);
+
+            FxParams all;
+            all.compOn = all.crushOn = all.chorusOn = all.flangerOn = all.phaserOn = all.eqOn = all.distOn = all.delayOn = all.reverbOn = true;
+            all.compMakeupDb = 24.0f;
+            all.flangerFeedback = -0.95f;
+            all.phaserFeedback = 0.95f;
+            all.eqLowDb = all.eqMidDb = all.eqHighDb = 15.0f;
+            all.crushBits = 1.0f;
+            bool finite = true;
+            float highest = 0.0f;
+            run (all, 300, false, [&] (int, const juce::AudioBuffer<float>& b)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < block; ++i)
+                    {
+                        finite = finite && std::isfinite (b.getSample (ch, i));
+                        highest = juce::jmax (highest, std::abs (b.getSample (ch, i)));
+                    }
+            });
+            check (finite && highest > 0.05f && highest <= 1.0f, "the new effects at extreme settings stay finite and under full scale");
+
+            FxParams comp;
+            comp.compOn = true;
+            comp.compThresholdDb = -30.0f;
+            comp.compRatio = 10.0f;
+            const float squeezed = measure (comp, side);
+            comp.compMakeupDb = 12.0f;
+            const float madeUp = measure (comp, side);
+            comp.compMakeupDb = 0.0f;
+            comp.compThresholdDb = 0.0f;
+            const float untouched = measure (comp, side);
+            std::printf ("      compressor: dry %.3f, at -30 dB and 10:1 %.3f, with 12 dB makeup %.3f\n", (double) dry, (double) squeezed, (double) madeUp);
+            check (squeezed < dry * 0.3f && squeezed > dry * 0.05f && madeUp > squeezed * 3.5f && std::abs (untouched - dry) < 0.03f,
+                   "compressor turns a loud signal down, makeup turns it up, and a signal under the threshold passes");
+
+            // Two bits leave only a few levels.
+            FxParams crush;
+            crush.crushOn = true;
+            crush.crushBits = 2.0f;
+            crush.crushRateHz = 40000.0f;
+            std::vector<float> seen;
+            run (crush, 20, false, [&] (int b, const juce::AudioBuffer<float>& buf)
+            {
+                if (b < 10)
+                    return;
+                for (int i = 0; i < block; ++i)
+                {
+                    const float v = buf.getSample (0, i);
+                    bool known = false;
+                    for (float s : seen)
+                        known = known || std::abs (s - v) < 0.01f;
+                    if (! known)
+                        seen.push_back (v);
+                }
+            });
+            crush.crushBits = 16.0f;
+            crush.crushRateHz = 1000.0f;
+            int holds = 0;
+            run (crush, 20, false, [&] (int, const juce::AudioBuffer<float>& buf)
+            {
+                for (int i = 1; i < block; ++i)
+                    holds += std::abs (buf.getSample (0, i) - buf.getSample (0, i - 1)) < 0.002f ? 1 : 0; // the limiter after it moves the level a little
+            });
+            check (seen.size() >= 2 && seen.size() <= 5, "bitcrusher with two bits leaves only a few levels");
+            check (holds > 20 * block * 9 / 10, "bitcrusher at a low rate holds every value for many samples");
+
+            // The modulation effects change the sound and spread it; with the mix at zero they do nothing.
+            const auto changes = [&] (FxParams p, const char* name, bool spreads)
+            {
+                float wide = 0.0f, none = 0.0f;
+                const float wet = measure (p, wide);
+                p.chorusMix = p.flangerMix = p.phaserMix = 0.0f;
+                const float off = measure (p, none);
+                std::printf ("      %-8s level %.3f (dry %.3f), left and right differ by %.3f\n", name, (double) wet, (double) dry, (double) wide);
+                return std::abs (off - dry) < 0.01f && none < 1.0e-4f && (spreads ? wide > 0.02f : true) && wet > 0.05f;
+            };
+
+            FxParams chorus, flanger, phaser;
+            chorus.chorusOn = true;
+            chorus.chorusRateHz = 3.0f;
+            flanger.flangerOn = true;
+            flanger.flangerRateHz = 2.0f;
+            phaser.phaserOn = true;
+            phaser.phaserRateHz = 2.0f;
+            check (changes (chorus, "chorus", true), "chorus widens the sound and does nothing with the mix at zero");
+            check (changes (flanger, "flanger", true), "flanger widens the sound and does nothing with the mix at zero");
+            check (changes (phaser, "phaser", true), "phaser widens the sound and does nothing with the mix at zero");
+
+            // The test tone is at 220 Hz.
+            FxParams eq;
+            eq.eqOn = true;
+            const float flat = measure (eq, side);
+            eq.eqMidHz = 220.0f;
+            eq.eqMidDb = -12.0f;
+            const float cut = measure (eq, side);
+            eq.eqMidDb = 0.0f;
+            eq.eqHighDb = -15.0f;
+            const float highCut = measure (eq, side);
+            eq.eqHighDb = 0.0f;
+            eq.eqLowDb = 6.0f;
+            const float lowBoost = measure (eq, side);
+            std::printf ("      eq on a 220 Hz tone: flat %.3f, mid -12 dB %.3f, high -15 dB %.3f, low +6 dB %.3f\n", (double) flat, (double) cut, (double) highCut, (double) lowBoost);
+            check (std::abs (flat - dry) < 0.005f && cut < dry * 0.45f && std::abs (highCut - dry) < 0.02f && lowBoost > dry * 1.02f,
+                   "equaliser in the chain is flat at zero, cuts the mid band and leaves the tone alone when the highs are cut");
+
+            // The bands on their own, without the limiter that follows them in the chain.
+            const auto gainAt = [sr] (EqBand::Type type, float bandHz, float gainDb, float toneHz)
+            {
+                EqBand band;
+                band.set (type, bandHz, gainDb, type == EqBand::peak ? 0.9f : 0.707f, (float) sr);
+                float peak = 0.0f;
+                for (int i = 0; i < 48000; ++i)
+                {
+                    const float y = band.process (std::sin (juce::MathConstants<float>::twoPi * toneHz * (float) i / (float) sr), 0);
+                    if (i > 24000)
+                        peak = juce::jmax (peak, std::abs (y));
+                }
+                return juce::Decibels::gainToDecibels (peak);
+            };
+
+            const float midDb = gainAt (EqBand::peak, 1000.0f, -12.0f, 1000.0f), midFar = gainAt (EqBand::peak, 1000.0f, -12.0f, 100.0f);
+            const float lowDb = gainAt (EqBand::lowShelf, 150.0f, 6.0f, 40.0f), lowFar = gainAt (EqBand::lowShelf, 150.0f, 6.0f, 3000.0f);
+            const float highDb = gainAt (EqBand::highShelf, 6000.0f, 9.0f, 16000.0f), highFar = gainAt (EqBand::highShelf, 6000.0f, 9.0f, 300.0f);
+            std::printf ("      eq bands: mid %.2f dB (%.2f far away), low %.2f dB (%.2f), high %.2f dB (%.2f)\n", (double) midDb, (double) midFar, (double) lowDb,
+                         (double) lowFar, (double) highDb, (double) highFar);
+            check (std::abs (midDb + 12.0f) < 0.3f && std::abs (midFar) < 0.5f && std::abs (lowDb - 6.0f) < 0.5f && std::abs (lowFar) < 0.3f
+                       && std::abs (highDb - 9.0f) < 0.6f && std::abs (highFar) < 0.3f,
+                   "every equaliser band has its gain in its own range and none far from it");
+        }
+
         // Gate: sixteenths at 120 bpm are 6000 samples; open for the first half of each step.
         {
             FxParams p;

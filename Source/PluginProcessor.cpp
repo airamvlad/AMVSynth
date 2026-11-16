@@ -316,6 +316,35 @@ amv::FxParams AMVSynthAudioProcessor::readFxParams() const
     p.duckDepth = value (id::duckDepth) * 0.01f;
     p.duckRelease = value (id::duckRelease) * 0.01f;
     p.order = juce::roundToInt (value (id::fxOrder));
+    p.compOn = value (id::compOn) > 0.5f;
+    p.compThresholdDb = value (id::compThreshold);
+    p.compRatio = value (id::compRatio);
+    p.compAttackMs = value (id::compAttack);
+    p.compReleaseMs = value (id::compRelease);
+    p.compMakeupDb = value (id::compMakeup);
+    p.crushOn = value (id::crushOn) > 0.5f;
+    p.crushBits = value (id::crushBits);
+    p.crushRateHz = value (id::crushRate);
+    p.crushMix = value (id::crushMix) * 0.01f;
+    p.chorusOn = value (id::chorusOn) > 0.5f;
+    p.chorusRateHz = value (id::chorusRate);
+    p.chorusDepth = value (id::chorusDepth) * 0.01f;
+    p.chorusMix = value (id::chorusMix) * 0.01f;
+    p.flangerOn = value (id::flangerOn) > 0.5f;
+    p.flangerRateHz = value (id::flangerRate);
+    p.flangerDepth = value (id::flangerDepth) * 0.01f;
+    p.flangerFeedback = value (id::flangerFeedback) * 0.01f;
+    p.flangerMix = value (id::flangerMix) * 0.01f;
+    p.phaserOn = value (id::phaserOn) > 0.5f;
+    p.phaserRateHz = value (id::phaserRate);
+    p.phaserDepth = value (id::phaserDepth) * 0.01f;
+    p.phaserFeedback = value (id::phaserFeedback) * 0.01f;
+    p.phaserMix = value (id::phaserMix) * 0.01f;
+    p.eqOn = value (id::eqOn) > 0.5f;
+    p.eqLowDb = value (id::eqLow);
+    p.eqMidDb = value (id::eqMid);
+    p.eqMidHz = value (id::eqMidFreq);
+    p.eqHighDb = value (id::eqHigh);
 
     // Modulation of the effects, worked out by the engine for this block.
     const auto moved = [this] (float v, int dest, float lowest, float highest)
@@ -330,6 +359,10 @@ amv::FxParams AMVSynthAudioProcessor::readFxParams() const
     p.delayMix = moved (p.delayMix, mod::dstDelayMix, 0.0f, 1.0f);
     p.reverbSize = moved (p.reverbSize, mod::dstReverbSize, 0.0f, 1.0f);
     p.reverbMix = moved (p.reverbMix, mod::dstReverbMix, 0.0f, 1.0f);
+    p.crushRateHz = juce::jlimit (200.0f, 40000.0f, p.crushRateHz * std::exp2 (engine.getGlobalModulation (mod::dstCrushRate) * mod::timeOctaves));
+    p.chorusMix = moved (p.chorusMix, mod::dstChorusMix, 0.0f, 1.0f);
+    p.flangerMix = moved (p.flangerMix, mod::dstFlangerMix, 0.0f, 1.0f);
+    p.phaserMix = moved (p.phaserMix, mod::dstPhaserMix, 0.0f, 1.0f);
     return p;
 }
 

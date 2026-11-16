@@ -51,7 +51,9 @@ inline const std::array<DelayTimeDef, 5>& getDelayTimes()
     return times;
 }
 
-/** The four effects that can change places. The kick duck and the limiter always come last. */
+/** The four effects that can change places. The compressor and the bitcrusher always come first,
+    the chorus, flanger and phaser sit right before the delay, and the equaliser, the kick duck
+    and the limiter come last. */
 enum class FxStage { distortion, gate, delay, reverb };
 
 struct FxOrderDef
@@ -95,9 +97,123 @@ struct FxParams
 
     bool duckOn = false;
     float duckDepth = 0.8f, duckRelease = 0.5f; // release as a fraction of a beat
+
+    bool compOn = false;
+    float compThresholdDb = -18.0f, compRatio = 4.0f, compAttackMs = 10.0f, compReleaseMs = 120.0f, compMakeupDb = 0.0f;
+
+    bool crushOn = false;
+    float crushBits = 8.0f, crushRateHz = 8000.0f, crushMix = 1.0f;
+
+    bool chorusOn = false;
+    float chorusRateHz = 0.6f, chorusDepth = 0.5f, chorusMix = 0.4f;
+
+    bool flangerOn = false;
+    float flangerRateHz = 0.25f, flangerDepth = 0.6f, flangerFeedback = 0.5f, flangerMix = 0.5f; // feedback -0.95..0.95
+
+    bool phaserOn = false;
+    float phaserRateHz = 0.4f, phaserDepth = 0.7f, phaserFeedback = 0.5f, phaserMix = 0.5f;
+
+    bool eqOn = false;
+    float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidHz = 1000.0f, eqHighDb = 0.0f;
 };
 
-/** The effect chain after the voices: distortion, trance gate, delay, reverb, kick duck, limiter.
+/** A second-order filter section for the equaliser, after the Audio EQ Cookbook. */
+struct EqBand
+{
+    enum Type { lowShelf, peak, highShelf };
+
+    void set (Type type, float hz, float gainDb, float q, float sampleRate) noexcept
+    {
+        const float a = std::pow (10.0f, gainDb / 40.0f);
+        const float w = juce::MathConstants<float>::twoPi * juce::jlimit (20.0f, 0.45f * sampleRate, hz) / sampleRate;
+        const float cs = std::cos (w), alpha = std::sin (w) / (2.0f * q);
+        float a0 = 1.0f;
+
+        if (type == peak)
+        {
+            b0 = 1.0f + alpha * a;
+            b1 = -2.0f * cs;
+            b2 = 1.0f - alpha * a;
+            a0 = 1.0f + alpha / a;
+            a1 = -2.0f * cs;
+            a2 = 1.0f - alpha / a;
+        }
+        else
+        {
+            const float sign = type == lowShelf ? 1.0f : -1.0f;
+            const float root = 2.0f * std::sqrt (a) * alpha;
+            b0 = a * ((a + 1.0f) - sign * (a - 1.0f) * cs + root);
+            b1 = sign * 2.0f * a * ((a - 1.0f) - sign * (a + 1.0f) * cs);
+            b2 = a * ((a + 1.0f) - sign * (a - 1.0f) * cs - root);
+            a0 = (a + 1.0f) + sign * (a - 1.0f) * cs + root;
+            a1 = -sign * 2.0f * ((a - 1.0f) + sign * (a + 1.0f) * cs);
+            a2 = (a + 1.0f) + sign * (a - 1.0f) * cs - root;
+        }
+
+        b0 /= a0;
+        b1 /= a0;
+        b2 /= a0;
+        a1 /= a0;
+        a2 /= a0;
+    }
+
+    float process (float x, int channel) noexcept
+    {
+        auto& s = state[(size_t) channel];
+        const float y = b0 * x + s[0];
+        s[0] = b1 * x - a1 * y + s[1];
+        s[1] = b2 * x - a2 * y;
+        return y;
+    }
+
+    void reset() noexcept { state = {}; }
+
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+    std::array<std::array<float, 2>, 2> state {};
+};
+
+/** A short stereo delay line that is read at a moving point, for the chorus and the flanger. */
+struct ModDelay
+{
+    void prepare (double sampleRate, double maxSeconds)
+    {
+        for (auto& line : lines)
+            line.assign ((size_t) (sampleRate * maxSeconds) + 8, 0.0f);
+        write = 0;
+    }
+
+    void reset() noexcept
+    {
+        for (auto& line : lines)
+            std::fill (line.begin(), line.end(), 0.0f);
+    }
+
+    float read (int channel, float delaySamples) const noexcept
+    {
+        const auto& line = lines[(size_t) channel];
+        const auto size = line.size();
+        float pos = (float) write - juce::jlimit (1.0f, (float) size - 4.0f, delaySamples);
+        if (pos < 0.0f)
+            pos += (float) size;
+
+        const auto i0 = (size_t) pos % size;
+        const float frac = pos - std::floor (pos);
+        return line[i0] + (line[(i0 + 1) % size] - line[i0]) * frac;
+    }
+
+    void push (float left, float right) noexcept
+    {
+        lines[0][write] = left;
+        lines[1][write] = right;
+        write = (write + 1) % lines[0].size();
+    }
+
+    std::array<std::vector<float>, 2> lines;
+    size_t write = 0;
+};
+
+/** The effect chain after the voices: compressor, bitcrusher, distortion, trance gate, chorus,
+    flanger, phaser, delay, reverb, equaliser, kick duck, limiter.
     The tempo-based effects follow the host position when it plays and run freely otherwise. */
 class FxChain
 {
@@ -116,6 +232,8 @@ public:
         oversampling = std::make_unique<juce::dsp::Oversampling<float>> (2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
         oversampling->initProcessing ((size_t) oversampleBlock);
 
+        chorusLine.prepare (sampleRate, 0.05);
+        flangerLine.prepare (sampleRate, 0.02);
         reverb.setSampleRate (sampleRate);
         limiter.prepare ({ sampleRate, (juce::uint32) juce::jmax (1, maxBlockSize), 2 });
         limiter.setThreshold (-0.3f);
@@ -136,6 +254,16 @@ public:
         crushHold = { 0.0f, 0.0f };
         crushCounter = 0.0f;
         freeBeat = 0.0;
+        chorusLine.reset();
+        flangerLine.reset();
+        chorusPhase = flangerPhase = phaserPhase = 0.0f;
+        flangerLast = phaserLast = { 0.0f, 0.0f };
+        phaserState = {};
+        compEnvelope = 0.0f;
+        bitHold = { 0.0f, 0.0f };
+        bitPhase = 1.0f;
+        for (auto& band : eqBands)
+            band.reset();
         if (oversampling != nullptr)
             oversampling->reset();
         reverb.reset();
@@ -159,6 +287,14 @@ public:
         if (! p.gateOn)
             gateGain = 1.0f;
 
+        if (p.compOn)
+            compress (left, right, numSamples, p);
+        else
+            compEnvelope = 0.0f;
+
+        if (p.crushOn)
+            bitcrush (left, right, numSamples, p);
+
         for (const auto stage : getFxOrders()[(size_t) juce::jlimit (0, (int) getFxOrders().size() - 1, p.order)].stages)
         {
             switch (stage)
@@ -174,6 +310,12 @@ public:
                     break;
 
                 case FxStage::delay:
+                    if (p.chorusOn)
+                        chorus (left, right, numSamples, p);
+                    if (p.flangerOn)
+                        flanger (left, right, numSamples, p);
+                    if (p.phaserOn)
+                        phaser (left, right, numSamples, p);
                     if (p.delayOn)
                         delay (left, right, numSamples, p, bpm);
                     break;
@@ -193,6 +335,9 @@ public:
                     break;
             }
         }
+
+        if (p.eqOn)
+            equalise (left, right, numSamples, p);
 
         if (p.duckOn)
             duck (left, right, numSamples, p, startBeat, beatsPerSample);
@@ -334,6 +479,148 @@ private:
         }
     }
 
+    void compress (float* left, float* right, int numSamples, const FxParams& p)
+    {
+        // Both sides are turned down together by the louder one, with a soft knee of 6 dB.
+        const float attack = 1.0f - std::exp (-1.0f / (juce::jmax (0.05f, p.compAttackMs) * 0.001f * (float) sampleRate));
+        const float release = 1.0f - std::exp (-1.0f / (juce::jmax (1.0f, p.compReleaseMs) * 0.001f * (float) sampleRate));
+        const float slope = 1.0f - 1.0f / juce::jmax (1.0f, p.compRatio);
+        const float makeup = juce::Decibels::decibelsToGain (p.compMakeupDb);
+        const float knee = 6.0f;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float level = juce::jmax (std::abs (left[i]), std::abs (right[i]));
+            compEnvelope += (level - compEnvelope) * (level > compEnvelope ? attack : release);
+
+            const float over = juce::Decibels::gainToDecibels (compEnvelope, -100.0f) - p.compThresholdDb;
+            float reduction = 0.0f;
+            if (over > knee * 0.5f)
+                reduction = over * slope;
+            else if (over > -knee * 0.5f)
+                reduction = slope * (over + knee * 0.5f) * (over + knee * 0.5f) / (2.0f * knee);
+
+            const float gain = juce::Decibels::decibelsToGain (-reduction) * makeup;
+            left[i] *= gain;
+            right[i] *= gain;
+        }
+    }
+
+    void bitcrush (float* left, float* right, int numSamples, const FxParams& p)
+    {
+        // Fewer steps for the level and a new value only at the lowered sample rate.
+        const float levels = std::exp2 (juce::jlimit (1.0f, 16.0f, p.crushBits) - 1.0f);
+        const float step = juce::jlimit (0.001f, 1.0f, p.crushRateHz / (float) sampleRate);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            bitPhase += step;
+            if (bitPhase >= 1.0f)
+            {
+                bitPhase -= 1.0f;
+                bitHold[0] = std::round (left[i] * levels) / levels;
+                bitHold[1] = std::round (right[i] * levels) / levels;
+            }
+
+            left[i] += (bitHold[0] - left[i]) * p.crushMix;
+            right[i] += (bitHold[1] - right[i]) * p.crushMix;
+        }
+    }
+
+    void chorus (float* left, float* right, int numSamples, const FxParams& p)
+    {
+        // Two copies per side, each a little late and drifting; the sides drift a quarter cycle apart.
+        const float step = p.chorusRateHz / (float) sampleRate;
+        const float centre = 0.014f * (float) sampleRate, sweep = p.chorusDepth * 0.006f * (float) sampleRate;
+        const float twoPi = juce::MathConstants<float>::twoPi;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            chorusLine.push (left[i], right[i]);
+            chorusPhase += step;
+            chorusPhase -= std::floor (chorusPhase);
+
+            const float a = twoPi * chorusPhase;
+            const float wetL = 0.5f * (chorusLine.read (0, centre + sweep * std::sin (a)) + chorusLine.read (0, centre * 1.6f + sweep * std::sin (a + 2.1f)));
+            const float wetR = 0.5f * (chorusLine.read (1, centre + sweep * std::sin (a + 1.571f)) + chorusLine.read (1, centre * 1.6f + sweep * std::sin (a + 3.67f)));
+
+            left[i] += (wetL - left[i]) * p.chorusMix * 0.7f;
+            right[i] += (wetR - right[i]) * p.chorusMix * 0.7f;
+        }
+    }
+
+    void flanger (float* left, float* right, int numSamples, const FxParams& p)
+    {
+        // A very short delay that sweeps, fed back into itself: a comb that moves through the sound.
+        const float step = p.flangerRateHz / (float) sampleRate;
+        const float shortest = 0.0004f * (float) sampleRate, sweep = p.flangerDepth * 0.007f * (float) sampleRate;
+        const float feedback = juce::jlimit (-0.95f, 0.95f, p.flangerFeedback);
+        const float twoPi = juce::MathConstants<float>::twoPi;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            flangerLine.push (left[i] + flangerLast[0] * feedback, right[i] + flangerLast[1] * feedback);
+            flangerPhase += step;
+            flangerPhase -= std::floor (flangerPhase);
+
+            flangerLast[0] = flangerLine.read (0, shortest + sweep * (0.5f + 0.5f * std::sin (twoPi * flangerPhase)));
+            flangerLast[1] = flangerLine.read (1, shortest + sweep * (0.5f + 0.5f * std::sin (twoPi * flangerPhase + 1.571f)));
+
+            left[i] += flangerLast[0] * p.flangerMix;
+            right[i] += flangerLast[1] * p.flangerMix;
+            left[i] *= 1.0f - 0.3f * p.flangerMix;
+            right[i] *= 1.0f - 0.3f * p.flangerMix;
+        }
+    }
+
+    void phaser (float* left, float* right, int numSamples, const FxParams& p)
+    {
+        // Six all-pass stages whose corner sweeps up and down; mixed with the dry sound they cut moving notches.
+        const float step = p.phaserRateHz / (float) sampleRate;
+        const float feedback = juce::jlimit (0.0f, 0.95f, p.phaserFeedback);
+        const float twoPi = juce::MathConstants<float>::twoPi;
+        float* io[2] { left, right };
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            phaserPhase += step;
+            phaserPhase -= std::floor (phaserPhase);
+
+            for (size_t ch = 0; ch < 2; ++ch)
+            {
+                const float lfo = 0.5f + 0.5f * std::sin (twoPi * phaserPhase + (ch == 0 ? 0.0f : 1.571f));
+                const float hz = juce::jmin (0.45f * (float) sampleRate, 300.0f * std::exp2 (lfo * p.phaserDepth * 4.5f));
+                const float t = std::tan (juce::MathConstants<float>::pi * hz / (float) sampleRate);
+                const float c = (t - 1.0f) / (t + 1.0f);
+
+                float x = io[ch][i] + phaserLast[ch] * feedback;
+                for (auto& z : phaserState[ch])
+                {
+                    const float y = c * x + z;
+                    z = x - c * y;
+                    x = y;
+                }
+
+                phaserLast[ch] = x;
+                io[ch][i] = (io[ch][i] + x * p.phaserMix) * (1.0f - 0.3f * p.phaserMix);
+            }
+        }
+    }
+
+    void equalise (float* left, float* right, int numSamples, const FxParams& p)
+    {
+        eqBands[0].set (EqBand::lowShelf, 150.0f, p.eqLowDb, 0.707f, (float) sampleRate);
+        eqBands[1].set (EqBand::peak, p.eqMidHz, p.eqMidDb, 0.9f, (float) sampleRate);
+        eqBands[2].set (EqBand::highShelf, 6000.0f, p.eqHighDb, 0.707f, (float) sampleRate);
+
+        for (int i = 0; i < numSamples; ++i)
+            for (auto& band : eqBands)
+            {
+                left[i] = band.process (left[i], 0);
+                right[i] = band.process (right[i], 1);
+            }
+    }
+
     void duck (float* left, float* right, int numSamples, const FxParams& p, double startBeat, double beatsPerSample)
     {
         // Volume dips on every quarter note and recovers, like sidechaining to a four-on-the-floor kick.
@@ -362,6 +649,14 @@ private:
     std::array<float, 2> crushHold { 0.0f, 0.0f };
     float crushCounter = 0.0f;
     double freeBeat = 0.0;
+    ModDelay chorusLine, flangerLine;
+    float chorusPhase = 0.0f, flangerPhase = 0.0f, phaserPhase = 0.0f;
+    std::array<float, 2> flangerLast { 0.0f, 0.0f }, phaserLast { 0.0f, 0.0f };
+    std::array<std::array<float, 6>, 2> phaserState {};
+    float compEnvelope = 0.0f;
+    std::array<float, 2> bitHold { 0.0f, 0.0f };
+    float bitPhase = 1.0f;
+    std::array<EqBand, 3> eqBands;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
     int oversampleBlock = 512;
     juce::Reverb reverb;
