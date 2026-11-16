@@ -344,8 +344,24 @@ void AMVSynthAudioProcessor::setCurrentProgram (int index)
     if (index < 0 || index >= (int) presets.size())
         return;
 
+    const auto& preset = presets[(size_t) index];
     currentPreset = index;
-    amv::applyPreset (apvts, presets[(size_t) index]);
+    amv::applyPreset (apvts, preset);
+
+    // The sequence and the drawn LFO shapes are not parameters; a preset without them gets the defaults.
+    amv::SeqPattern pattern;
+    for (size_t i = 0; i < juce::jmin (preset.sequence.size(), pattern.steps.size()); ++i)
+        pattern.steps[i] = preset.sequence[i];
+    setSeqPattern (pattern, true);
+
+    for (int lfo = 0; lfo < amv::mod::numLfos; ++lfo)
+    {
+        std::vector<amv::LfoPoint> points;
+        for (const auto& [which, shape] : preset.lfoShapes)
+            if (which == lfo)
+                points = shape;
+        setLfoShape (lfo, std::move (points), true);
+    }
 }
 
 const juce::String AMVSynthAudioProcessor::getProgramName (int index)

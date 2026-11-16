@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "PresetBrowser.h"
 #include "SampleDisplay.h"
 #include "StepEditor.h"
 #include "WavetableEditor.h"
@@ -284,10 +285,14 @@ private:
     int currentPage = 0, buildingPage = 0;
 
     juce::ComboBox presetBox;
-    juce::TextButton prevPreset { "<" }, nextPreset { ">" }, savePreset { "SAVE" }, loadPreset { "LOAD" };
+    juce::TextButton prevPreset { "<" }, nextPreset { ">" }, savePreset { "SAVE" }, browsePreset { "BROWSE" };
     std::unique_ptr<juce::FileChooser> fileChooser;
     int shownPreset = -1;
     void selectPreset (int index);
+    void loadUserPreset (const juce::File&);
+    void showBrowser (bool show);
+    PresetBrowser browser;
+    juce::File userPreset; // the preset file that is loaded, if any
 
     PatternDisplay patternDisplay;
     WaveDisplay waveA, waveB;
