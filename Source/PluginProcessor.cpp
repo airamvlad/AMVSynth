@@ -377,7 +377,7 @@ amv::FxParams AMVSynthAudioProcessor::readFxParams() const
 
 juce::AudioProcessorEditor* AMVSynthAudioProcessor::createEditor()
 {
-    return new AMVSynthAudioProcessorEditor (*this);
+    return new AMVSynthWindow (*this);
 }
 
 void AMVSynthAudioProcessor::setCurrentProgram (int index)

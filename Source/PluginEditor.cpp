@@ -188,8 +188,28 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
                               "Shift-drag a modulated knob up or down to set how far it moves.",
                               "Right-click a knob to add, invert or remove a modulation.",
                               "The MOD page lists every modulation and has the LFO and macro settings." };
-        addSection ("MODULATION", false, 0, 7.0f).display = &helpDisplay;
+        addSection ("MODULATION", false, 0, 6.0f).display = &helpDisplay;
         addChildComponent (helpDisplay);
+
+        // The size of the window. It can also be dragged by its corner.
+        auto& zoom = addSection ("WINDOW SIZE", false, 0, 2.6f);
+        zoom.columnsInColumn = 2;
+        static constexpr int percents[] { 100, 125, 150, 200 };
+        for (size_t i = 0; i < zoomButtons.size(); ++i)
+        {
+            auto& button = zoomButtons[i];
+            button.setButtonText (juce::String (percents[i]) + "%");
+            button.setTooltip ("Show the whole interface at this size. You can also drag the corner of the window.");
+            button.setColour (juce::TextButton::buttonColourId, colour::knob);
+            button.setColour (juce::TextButton::textColourOffId, colour::text);
+            button.onClick = [this, percent = percents[i]]
+            {
+                if (onZoom != nullptr)
+                    onZoom ((float) percent * 0.01f);
+            };
+            addChildComponent (button);
+            zoom.column.push_back (&button);
+        }
         buildingPage = 0;
     }
     {
@@ -730,10 +750,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
     updateVisibility();
     startTimerHz (30);
 
-    setResizable (true, true);
-    getConstrainer()->setFixedAspectRatio (1040.0 / 840.0);
-    setResizeLimits (780, 630, 2080, 1680);
-    setSize (1040, 840);
+    setSize (AMVSynthWindow::baseWidth, AMVSynthWindow::baseHeight);
 }
 
 AMVSynthAudioProcessorEditor::~AMVSynthAudioProcessorEditor()
@@ -881,6 +898,8 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
     statusLabel.setVisible (hasSourceBar());
     waveEditor.setVisible (currentPage == 5);
     for (auto& button : importButtons)
+        button.setVisible (false);
+    for (auto& button : zoomButtons)
         button.setVisible (false);
     for (auto& button : sampleButtons)
         button.setVisible (false);
@@ -2521,4 +2540,58 @@ void AMVSynthAudioProcessorEditor::resized()
             layoutSection (s);
         }
     }
+}
+
+//==============================================================================
+AMVSynthWindow::AMVSynthWindow (AMVSynthAudioProcessor& p)
+    : juce::AudioProcessorEditor (&p), content (p)
+{
+    addAndMakeVisible (content);
+    content.onZoom = [this] (float scale)
+    {
+        scale = limitScale (scale);
+        saveScale (scale);
+        setSize (juce::roundToInt ((float) baseWidth * scale), juce::roundToInt ((float) baseHeight * scale));
+    };
+
+    setResizable (true, true);
+    getConstrainer()->setFixedAspectRatio ((double) baseWidth / (double) baseHeight);
+    setResizeLimits (juce::roundToInt ((float) baseWidth * limitScale (0.0f)), juce::roundToInt ((float) baseHeight * limitScale (0.0f)),
+                     juce::roundToInt ((float) baseWidth * limitScale (10.0f)), juce::roundToInt ((float) baseHeight * limitScale (10.0f)));
+
+    const float scale = loadScale();
+    setSize (juce::roundToInt ((float) baseWidth * scale), juce::roundToInt ((float) baseHeight * scale));
+}
+
+AMVSynthWindow::~AMVSynthWindow()
+{
+    // A size that was dragged is remembered too.
+    const float scale = limitScale ((float) getWidth() / (float) baseWidth);
+    if (std::abs (scale - loadScale()) > 0.005f)
+        saveScale (scale);
+}
+
+void AMVSynthWindow::resized()
+{
+    // The interface keeps its own size and is scaled as a whole, so nothing in it moves or blurs apart.
+    content.setTransform (juce::AffineTransform::scale ((float) getWidth() / (float) baseWidth));
+    content.setBounds (0, 0, baseWidth, baseHeight);
+}
+
+juce::File AMVSynthWindow::scaleFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("AMVSynth").getChildFile ("window.txt");
+}
+
+float AMVSynthWindow::loadScale()
+{
+    const auto text = scaleFile().loadFileAsString().trim();
+    return text.isEmpty() ? 1.0f : limitScale (text.getFloatValue());
+}
+
+void AMVSynthWindow::saveScale (float scale)
+{
+    const auto file = scaleFile();
+    file.getParentDirectory().createDirectory();
+    file.replaceWithText (juce::String (limitScale (scale), 3));
 }
