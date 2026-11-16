@@ -2,6 +2,8 @@
 
 A free synthesizer plugin that brings Serbian and Balkan folk sounds into psytrance. The instruments are synthesized (wavetables and physical modelling), with no sample library; a sampler with a granular mode is there for your own recordings.
 
+New here? The [manual](docs/MANUAL.md) walks through every page with pictures.
+
 What it does:
 
 - Seventeen models in the Balkan engine: Južni Vetar keyboard lead, accordion, gusle, frula, kaval, gajde with a drone on the scale root, zurla, tambura (plucked string), tapan (drum), dvojnice (double flute), clarinet, truba (brass), violin, šargija with a drone string, kanun with tremolo picking, darbuka and a sung voice
