@@ -14,7 +14,7 @@ What it does:
 - Warp on both wavetable oscillators (Bend +, Bend -, PWM, Sync, Mirror) with a WARP knob that can be modulated, and a 3D view of all frames of the table with the playing position marked
 - FM, ring and amplitude modulation of each wavetable oscillator by the other oscillator, the sub, the noise, the Balkan engine or the sampler. The modulator works even with its own level turned down, and the amount is a modulation destination
 - Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
-- 45 factory presets for the folk models and for psytrance basses, leads, pads, arps and sequences, plus saving and loading your own presets as files
+- 50 factory presets for the folk models and for psytrance basses, leads, pads, arps and sequences, plus saving and loading your own presets as files
 - Preset browser (BROWSE in the header): the factory presets by category, your own presets from the `AMVSynth Presets` folder in Documents (subfolders included), a search box and favourites. A click or the arrow keys load a preset straight away, so you can play through the list
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar
 - Odd-meter step sequencer on the SEQ page: up to 32 steps, each with its own note (two octaves around the held key, which transposes the pattern), velocity, gate and slide
