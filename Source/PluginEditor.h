@@ -52,6 +52,7 @@ class AMVSynthAudioProcessorEditor final : public juce::AudioProcessorEditor,
 public:
     explicit AMVSynthAudioProcessorEditor (AMVSynthAudioProcessor&);
     ~AMVSynthAudioProcessorEditor() override;
+    bool keyPressed (const juce::KeyPress&) override;
 
     /** Called by the size buttons on the SETUP page with the scale they ask for, 1 for 100 percent. */
     std::function<void (float)> onZoom;
@@ -291,6 +292,37 @@ private:
 
     juce::ComboBox presetBox;
     juce::TextButton prevPreset { "<" }, nextPreset { ">" }, savePreset { "SAVE" }, browsePreset { "BROWSE" };
+
+    /** Undo or redo: a bent arrow, dim while there is nothing to take back. */
+    struct HistoryButton final : public juce::Button
+    {
+        explicit HistoryButton (bool isRedo) : juce::Button (isRedo ? "redo" : "undo"), redo (isRedo) {}
+        void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+        bool redo;
+    };
+
+    /** Tells the editor when the user starts and ends a change anywhere in the plugin's windows,
+        the popup menus too. */
+    struct ActionWatcher final : public juce::MouseListener
+    {
+        explicit ActionWatcher (AMVSynthAudioProcessorEditor& e) : editor (e) {}
+        void mouseDown (const juce::MouseEvent&) override { editor.userActionStarted(); }
+        void mouseUp (const juce::MouseEvent&) override { editor.userActionEnded(); }
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override
+        {
+            editor.userActionStarted();
+            editor.userActionEnded();
+        }
+        AMVSynthAudioProcessorEditor& editor;
+    };
+
+    HistoryButton undoButton { false }, redoButton { true };
+    ActionWatcher actionWatcher { *this };
+    juce::uint32 watchChangesUntil = 0; // a change by the user is looked for until this time
+    int historyTick = 0;
+    void userActionStarted();
+    void userActionEnded();
+    void stepHistory (bool redo);
     std::unique_ptr<juce::FileChooser> fileChooser;
     int shownPreset = -1;
     void selectPreset (int index);

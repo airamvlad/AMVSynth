@@ -17,6 +17,7 @@ What it does:
 - Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
 - The Balkan models can be stacked: up to five copies per note as a detuned unison spread left and right, or as octaves, fifths and minor, major or sus4 chords from one key
 - The whole interface scales: 100, 125, 150 or 200 percent from the SETUP page, or any size in between by dragging the corner of the window. The size is remembered
+- Undo and redo, with buttons next to the preset bar and Ctrl/Cmd+Z: controls, presets, sequencer patterns, drawn wavetables and LFO shapes, up to a hundred steps. Automation from the host is not counted as a step
 - 54 factory presets for the folk models and for psytrance basses, leads, pads, arps and sequences, plus saving and loading your own presets as files
 - Preset browser (BROWSE in the header): the factory presets by category, your own presets from the `AMVSynth Presets` folder in Documents (subfolders included), a search box and favourites. A click or the arrow keys load a preset straight away, so you can play through the list
 - Odd-meter arpeggiator with accent groups (5/8, 7/8, 9/8, 11/8), synced to the host tempo, with a polymeter mode that lets the pattern cycle over a 4/4 bar

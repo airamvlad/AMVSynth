@@ -415,6 +415,72 @@ int main()
                "a preset loads its macro wiring into the modulation slots");
     }
 
+    // Undo and redo take back controls and patterns, and leave alone what changed without the user.
+    {
+        const auto check = [&failures] (bool ok, const char* what)
+        {
+            std::printf ("%s  %s\n", ok ? "ok  " : "FAIL", what);
+            failures += ok ? 0 : 1;
+        };
+
+        std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());
+        auto* p = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        auto* cutoff = p->apvts.getParameter (amv::id::cutoff);
+        auto* resonance = p->apvts.getParameter (amv::id::resonance);
+        const auto hz = [cutoff] { return cutoff->convertFrom0to1 (cutoff->getValue()); };
+        const auto setHz = [cutoff] (float v) { cutoff->setValueNotifyingHost (cutoff->convertTo0to1 (v)); };
+
+        p->undoBaseline();
+        check (! p->canUndo() && ! p->canRedo() && ! p->undoCheckpoint(), "nothing to undo before anything changed");
+
+        setHz (500.0f);
+        const bool first = p->undoCheckpoint();
+
+        amv::SeqPattern pattern;
+        pattern.steps[2].note = 5;
+        p->setSeqPattern (0, pattern, true);
+        const bool second = p->undoCheckpoint();
+        check (first && second && p->canUndo() && ! p->canRedo() && ! p->undoCheckpoint(), "a changed control and a changed pattern are a step each");
+
+        p->undo();
+        check (p->getSeqPattern (0).steps[2].note == 0 && std::abs (hz() - 500.0f) < 1.0f && p->canRedo(), "undo takes the pattern back and keeps the control");
+        p->undo();
+        check (std::abs (hz() - 3200.0f) < 1.0f && ! p->canUndo(), "a second undo takes the control back");
+        p->redo();
+        p->redo();
+        check (std::abs (hz() - 500.0f) < 1.0f && p->getSeqPattern (0).steps[2].note == 5 && ! p->canRedo(), "redo brings both back");
+
+        // Automation moves the resonance; the next change by the user is a step of its own.
+        p->undo();
+        resonance->setValueNotifyingHost (0.9f);
+        p->undoBaseline();
+        setHz (900.0f);
+        check (p->undoCheckpoint() && ! p->canRedo(), "a new change ends what could be redone");
+        p->undo();
+        check (std::abs (hz() - 500.0f) < 1.0f && std::abs (resonance->getValue() - 0.9f) < 0.01f, "undo leaves alone what changed without the user");
+
+        // A preset is one step.
+        p->undoBaseline();
+        plugin->setCurrentProgram (3);
+        check (p->undoCheckpoint() && plugin->getCurrentProgram() == 3, "choosing a preset is a step");
+        p->undo();
+        check (plugin->getCurrentProgram() == 0 && std::abs (hz() - 500.0f) < 1.0f, "undo brings back the sound from before the preset");
+
+        // The history does not grow without end.
+        for (int i = 0; i < 150; ++i)
+        {
+            setHz (1000.0f + (float) i * 10.0f);
+            p->undoCheckpoint();
+        }
+        int steps = 0;
+        while (p->canUndo() && steps < 1000)
+        {
+            p->undo();
+            ++steps;
+        }
+        check (steps == 99, "the history keeps a hundred steps");
+    }
+
     // A drawn LFO shape is saved with the project, and a modulated effect is heard.
     {
         std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());

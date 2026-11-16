@@ -32,6 +32,20 @@ public:
 
     int getNumPrograms() override { return (int) amv::getFactoryPresets().size(); }
     int getCurrentProgram() override { return currentPreset; }
+
+    /** Undo and redo for everything that is saved with the project: the controls, the patterns,
+        the drawn wavetables and LFO shapes. The editor calls undoBaseline() when the user
+        starts to change something and undoCheckpoint() when a change is done. Message thread only.
+
+        undoBaseline() takes what happened without the user, for example automation, into the
+        step that is in use, so that an undo does not take that back as well. undoCheckpoint()
+        adds a step when the state is not what it was; it returns true when it did. */
+    void undoBaseline();
+    bool undoCheckpoint();
+    bool canUndo() const noexcept { return historyIndex > 0; }
+    bool canRedo() const noexcept { return historyIndex >= 0 && historyIndex + 1 < (int) history.size(); }
+    void undo();
+    void redo();
     void setCurrentProgram (int index) override;
     const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
@@ -130,6 +144,12 @@ private:
     juce::MidiBuffer arpMidi, seqMidi;
     juce::SmoothedValue<float> outputGain;
     int currentPreset = 0;
+
+    // Undo and redo: whole states of the plugin, as the host would save them. `historyIndex`
+    // is the one that is in use now.
+    std::vector<juce::MemoryBlock> history;
+    int historyIndex = -1;
+    void trimHistory();
 
     // Imported wavetables. The audio thread only reads the pointers; the tables themselves are
     // made and thrown away on the message thread, a few imports after they were replaced.
