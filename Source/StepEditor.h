@@ -26,6 +26,8 @@ public:
     void shift (int by);
     void reverse();
     void clear();
+    void copy();
+    void paste();
 
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -49,8 +51,10 @@ private:
     juce::String valueText (int lane, int step) const;
 
     AMVSynthAudioProcessor& processor;
-    amv::SeqPattern pattern;
-    const amv::SeqPattern* patternFrom = nullptr;
+    amv::SeqPattern pattern, clipboard;
+    bool hasClipboard = false;
+    int shownVersion = -1, select = 0; // which of the four patterns is shown and edited
+    std::atomic<float>* selectParam = nullptr;
     std::atomic<float>* lengthParam = nullptr;
     std::atomic<float>* meterParam = nullptr;
     std::atomic<float>* onParam = nullptr;
@@ -61,4 +65,41 @@ private:
     bool slideValue = false, restoring = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepEditor)
+};
+
+/** Chooses which of the four patterns is shown and played, and sets up the chain.
+
+    The letters choose the pattern; the one that is playing has a dot. KEY SWITCH lets the four
+    lowest MIDI keys (C0 to D#0) choose it while playing, CHAIN plays the patterns in the boxes
+    below one after the other. A click on a box steps it through A to D, a click on the first
+    empty box adds one, a right click removes one. */
+class PatternBar final : public juce::Component,
+                         public juce::TooltipClient
+{
+public:
+    explicit PatternBar (AMVSynthAudioProcessor&);
+
+    /** Called from the editor's timer. */
+    void refresh();
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    juce::String getTooltip() override;
+
+private:
+    enum Part { none = -1, letters, keySwitch, chainOn, chain };
+
+    juce::Rectangle<float> row (int index) const;
+    juce::Rectangle<float> cell (int rowIndex, int index, int count) const;
+    int partAt (juce::Point<float>, int& index) const;
+    void setParam (const char* paramId, float value);
+
+    AMVSynthAudioProcessor& processor;
+    std::vector<int> chainShown;
+    int select = 0, playing = -1, version = -1, hoverPart = none, hoverIndex = -1;
+    bool keySwitchOn = false, chainIsOn = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PatternBar)
 };

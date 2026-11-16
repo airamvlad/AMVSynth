@@ -228,7 +228,7 @@ int main()
             p->setCurrentProgram (withSequence);
             bool same = synth->apvts.getRawParameterValue (amv::id::seqOn)->load() > 0.5f;
             for (size_t i = 0; i < sequence.size(); ++i)
-                same = same && synth->getSeqPattern().steps[i].note == sequence[i].note && synth->getSeqPattern().steps[i].slide == sequence[i].slide;
+                same = same && synth->getSeqPattern (0).steps[i].note == sequence[i].note && synth->getSeqPattern (0).steps[i].slide == sequence[i].slide;
 
             const auto& [lfo, points] = presets[(size_t) withShape].lfoShapes.front();
             p->setCurrentProgram (withShape);
@@ -236,7 +236,7 @@ int main()
 
             p->setCurrentProgram (0);
             bool cleared = synth->getLfoPoints (lfo).size() == 2;
-            for (const auto& step : synth->getSeqPattern().steps)
+            for (const auto& step : synth->getSeqPattern (0).steps)
                 cleared = cleared && step.note == 0 && ! step.slide;
 
             ok = same && shaped && cleared;
@@ -282,7 +282,11 @@ int main()
         pattern.steps[2].gate = 0.0f;
         pattern.steps[3].slide = true;
         pattern.steps[3].velocity = 0.35f;
-        first->setSeqPattern (pattern, true);
+        first->setSeqPattern (0, pattern, true);
+        amv::SeqPattern second2;
+        second2.steps[0].note = -5;
+        first->setSeqPattern (2, second2, true);
+        first->setSeqChain ({ 0, 2, 2, 1 });
         first->apvts.getParameter (amv::id::seqOn)->setValueNotifyingHost (1.0f);
 
         juce::MemoryBlock state;
@@ -290,7 +294,10 @@ int main()
         std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
         other->setStateInformation (state.getData(), (int) state.getSize());
         auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
-        const auto& restored = second->getSeqPattern();
+        const auto& restored = second->getSeqPattern (0);
+        check (second->getSeqPattern (2).steps[0].note == -5 && second->getSeqPattern (1).steps[0].note == 0
+                   && second->getSeqChain() == std::vector<int> ({ 0, 2, 2, 1 }),
+               "the other patterns and the chain are saved with the project");
         check (restored.steps[1].note == 7 && restored.steps[2].gate == 0.0f && restored.steps[3].slide && std::abs (restored.steps[3].velocity - 0.35f) < 0.002f
                    && restored.steps[0].note == 0 && ! restored.steps[0].slide,
                "the sequencer pattern is saved with the project");

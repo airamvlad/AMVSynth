@@ -97,6 +97,9 @@ inline constexpr auto seqGate = "seqGate";
 inline constexpr auto seqSwing = "seqSwing";
 inline constexpr auto seqFreeCycle = "seqFreeCycle";
 inline constexpr auto seqLatch = "seqLatch";
+inline constexpr auto seqSelect = "seqSelect";
+inline constexpr auto seqChainOn = "seqChainOn";
+inline constexpr auto seqKeySwitch = "seqKeySwitch";
 inline constexpr auto distOn = "distOn";
 inline constexpr auto distType = "distType";
 inline constexpr auto distDrive = "distDrive";
@@ -605,6 +608,9 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     add (id::seqSwing, "Seq Swing", Range (0.0f, 75.0f), 0.0f, "%");
     addBool (id::seqFreeCycle, "Seq Free Cycle", true);
     addBool (id::seqLatch, "Seq Latch", false);
+    addChoice (id::seqSelect, "Seq Pattern", { "A", "B", "C", "D" }, 0);
+    addBool (id::seqChainOn, "Seq Chain", false);
+    addBool (id::seqKeySwitch, "Seq Key Switch", false);
 
     // Effects
     juce::StringArray distTypes, gatePatterns, delayTimes;

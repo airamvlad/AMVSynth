@@ -18,7 +18,8 @@ AMVSynthAudioProcessor::AMVSynthAudioProcessor()
 
     for (int i = 0; i < mod::numLfos; ++i)
         setLfoShape (i, {}, false);
-    setSeqPattern ({}, false);
+    seqBank.chainFromString ("AB");
+    publishSeqBank();
 
     const auto& knobIds = getEngineKnobIds();
     for (size_t m = 0; m < knobIds.size(); ++m)
@@ -225,11 +226,15 @@ void AMVSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     sp.swing = value (amv::id::seqSwing) * 0.01f;
     sp.freeCycle = value (amv::id::seqFreeCycle) > 0.5f;
     sp.latch = value (amv::id::seqLatch) > 0.5f;
-    sp.pattern = activeSeqPattern.load (std::memory_order_acquire);
+    sp.bank = activeSeqBank.load (std::memory_order_acquire);
+    sp.select = juce::roundToInt (value (amv::id::seqSelect));
+    sp.chainOn = value (amv::id::seqChainOn) > 0.5f;
+    sp.keySwitch = value (amv::id::seqKeySwitch) > 0.5f;
     ap.on = ap.on && ! sp.on;
 
     sequencer.process (midi, seqMidi, buffer.getNumSamples(), sp, transport);
     seqStep.store (sequencer.getCurrentStep(), std::memory_order_relaxed);
+    seqPatternPlaying.store (sequencer.getCurrentPattern(), std::memory_order_relaxed);
     arp.process (seqMidi, arpMidi, buffer.getNumSamples(), ap, transport);
 
     // The voices render in mono, the effects work in stereo.
@@ -385,7 +390,10 @@ void AMVSynthAudioProcessor::setCurrentProgram (int index)
     amv::SeqPattern pattern;
     for (size_t i = 0; i < juce::jmin (preset.sequence.size(), pattern.steps.size()); ++i)
         pattern.steps[i] = preset.sequence[i];
-    setSeqPattern (pattern, true);
+    setSeqPattern (0, pattern, true);
+    for (int i = 1; i < amv::SeqBank::numPatterns; ++i)
+        setSeqPattern (i, {}, true);
+    setSeqChain ({ 0, 1 });
 
     for (int lfo = 0; lfo < amv::mod::numLfos; ++lfo)
     {
@@ -673,29 +681,68 @@ void AMVSynthAudioProcessor::restoreLfoShapes()
         setLfoShape (lfo, amv::LfoShape::pointsFromString (apvts.state.getProperty ("lfoShape" + juce::String (lfo + 1)).toString()), false);
 }
 
-void AMVSynthAudioProcessor::setSeqPattern (const amv::SeqPattern& newPattern, bool save)
+void AMVSynthAudioProcessor::publishSeqBank()
 {
-    auto pattern = std::make_unique<amv::SeqPattern> (newPattern);
+    auto bank = std::make_unique<amv::SeqBank> (seqBank);
     const auto now = juce::jmax<juce::uint32> (1, juce::Time::getMillisecondCounter());
-    const auto* previous = activeSeqPattern.exchange (pattern.get(), std::memory_order_acq_rel);
+    const auto* previous = activeSeqBank.exchange (bank.get(), std::memory_order_acq_rel);
 
-    for (auto& stored : seqPatternStore)
-        if (stored.pattern.get() == previous && previous != nullptr)
+    for (auto& stored : seqBankStore)
+        if (stored.bank.get() == previous && previous != nullptr)
             stored.retiredAt = now;
-    seqPatternStore.push_back ({ std::move (pattern), 0 });
+    seqBankStore.push_back ({ std::move (bank), 0 });
 
-    seqPatternStore.erase (std::remove_if (seqPatternStore.begin(), seqPatternStore.end(),
-                                           [now] (const StoredPattern& stored) { return stored.retiredAt != 0 && now - stored.retiredAt > 500; }),
-                           seqPatternStore.end());
+    seqBankStore.erase (std::remove_if (seqBankStore.begin(), seqBankStore.end(),
+                                        [now] (const StoredBank& stored) { return stored.retiredAt != 0 && now - stored.retiredAt > 500; }),
+                        seqBankStore.end());
+    ++seqVersion;
+}
+
+namespace
+{
+/** Pattern A keeps the name it had when there was only one pattern. */
+juce::String seqPatternProperty (int index)
+{
+    return index == 0 ? juce::String ("seqPattern") : "seqPattern" + juce::String::charToString ((juce::juce_wchar) ('A' + index));
+}
+} // namespace
+
+void AMVSynthAudioProcessor::setSeqPattern (int index, const amv::SeqPattern& newPattern, bool save)
+{
+    if (index < 0 || index >= amv::SeqBank::numPatterns)
+        return;
+
+    seqBank.patterns[(size_t) index] = newPattern;
+    publishSeqBank();
 
     if (save)
-        apvts.state.setProperty ("seqPattern", newPattern.toString(), nullptr);
+        apvts.state.setProperty (seqPatternProperty (index), newPattern.toString(), nullptr);
+}
+
+void AMVSynthAudioProcessor::setSeqChain (const std::vector<int>& chain)
+{
+    seqBank.chainLength = 0;
+    for (int which : chain)
+        if (which >= 0 && which < amv::SeqBank::numPatterns && seqBank.chainLength < amv::SeqBank::maxChain)
+            seqBank.chain[(size_t) seqBank.chainLength++] = which;
+
+    publishSeqBank();
+    apvts.state.setProperty ("seqChain", seqBank.chainToString(), nullptr);
+}
+
+std::vector<int> AMVSynthAudioProcessor::getSeqChain() const
+{
+    return { seqBank.chain.begin(), seqBank.chain.begin() + seqBank.chainLength };
 }
 
 void AMVSynthAudioProcessor::restoreSeqPattern()
 {
-    // A state without a pattern gets the default one.
-    setSeqPattern (amv::SeqPattern::fromString (apvts.state.getProperty ("seqPattern").toString()), false);
+    // A state without a pattern gets the default one, and one without a chain plays A then B.
+    for (int i = 0; i < amv::SeqBank::numPatterns; ++i)
+        seqBank.patterns[(size_t) i] = amv::SeqPattern::fromString (apvts.state.getProperty (seqPatternProperty (i)).toString());
+
+    seqBank.chainFromString (apvts.state.getProperty ("seqChain", "AB").toString());
+    publishSeqBank();
 }
 
 bool AMVSynthAudioProcessor::savePresetFile (const juce::File& file)

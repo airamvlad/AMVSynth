@@ -53,6 +53,38 @@ struct SeqPattern
     }
 };
 
+/** The four patterns of the sequencer, A to D, and the chain that plays them in turn. */
+struct SeqBank
+{
+    static constexpr int numPatterns = 4;
+    static constexpr int maxChain = 8;
+    static constexpr int firstSwitchNote = 24; // the four keys from here (C0 to D#0, below the 61 key range) choose a pattern
+
+    std::array<SeqPattern, numPatterns> patterns {};
+    std::array<int, maxChain> chain {};
+    int chainLength = 0;
+
+    /** The chain as letters, for example "AABC". */
+    juce::String chainToString() const
+    {
+        juce::String text;
+        for (int i = 0; i < chainLength; ++i)
+            text << (char) ('A' + chain[(size_t) i]);
+        return text;
+    }
+
+    void chainFromString (const juce::String& text)
+    {
+        chainLength = 0;
+        for (int i = 0; i < text.length() && chainLength < maxChain; ++i)
+        {
+            const int index = (int) text[i] - 'A';
+            if (index >= 0 && index < numPatterns)
+                chain[(size_t) chainLength++] = index;
+        }
+    }
+};
+
 struct SeqParams
 {
     bool on = false;
@@ -62,7 +94,11 @@ struct SeqParams
     float swing = 0.0f;      // 0..0.75: how late every second step is, as a part of half a step
     bool freeCycle = true;   // true: the pattern cycles freely over the host bar; false: it restarts every bar
     bool latch = false;      // keep playing after the key is released
-    const SeqPattern* pattern = nullptr;
+    const SeqPattern* pattern = nullptr; // a single pattern, used when there is no bank
+    const SeqBank* bank = nullptr;       // the four patterns and the chain
+    int select = 0;          // the pattern that plays, 0 to 3
+    bool chainOn = false;    // play the patterns of the chain one after the other instead
+    bool keySwitch = false;  // the four lowest keys choose the pattern instead of playing
 };
 
 /** Plays a pattern of steps from the held key, which transposes it. Every step has its own note,
@@ -86,11 +122,14 @@ public:
     /** The step that played last, or -1 when the sequencer is silent. */
     int getCurrentStep() const noexcept { return shownStep; }
 
+    /** The pattern that step came from, 0 to 3. */
+    int getCurrentPattern() const noexcept { return shownPattern; }
+
     void process (const juce::MidiBuffer& in, juce::MidiBuffer& out, int numSamples, const SeqParams& p, const TransportInfo& t)
     {
         out.clear();
 
-        if (! p.on || p.pattern == nullptr)
+        if (! p.on || (p.pattern == nullptr && p.bank == nullptr))
         {
             if (wasOn)
             {
@@ -116,12 +155,20 @@ public:
             freeNext = 0.0;
             freeStep = 0;
             freeCount = 0;
+            freePass = 0;
             wasOn = true;
             wasPlaying = t.playing;
         }
 
         if (! p.latch && held.empty())
             hasRoot = false;
+
+        // The parameter chooses the pattern; a key switch overrides it until the parameter moves again.
+        if (p.select != lastSelect)
+        {
+            lastSelect = p.select;
+            selected = juce::jlimit (0, SeqBank::numPatterns - 1, p.select);
+        }
 
         params = p;
         params.length = juce::jlimit (1, (int) SeqPattern::maxSteps, p.length);
@@ -221,6 +268,15 @@ private:
 
     void handleInput (const juce::MidiMessage& m, int pos, juce::MidiBuffer& out)
     {
+        if (params.keySwitch && params.bank != nullptr && (m.isNoteOn() || m.isNoteOff()) && m.getNoteNumber() >= SeqBank::firstSwitchNote
+            && m.getNoteNumber() < SeqBank::firstSwitchNote + SeqBank::numPatterns)
+        {
+            if (m.isNoteOn())
+                selected = m.getNoteNumber() - SeqBank::firstSwitchNote;
+
+            return;
+        }
+
         if (m.isNoteOn())
         {
             if (held.empty() && ! (params.latch && hasRoot))
@@ -229,6 +285,7 @@ private:
                 freeNext = (double) pos;
                 freeStep = 0;
                 freeCount = 0;
+                freePass = 0;
             }
 
             removeHeld (m.getNoteNumber());
@@ -278,11 +335,16 @@ private:
                 if (pos >= to)
                     break;
 
+                // The chain moves on with every pass of the pattern, or with every bar when the pattern restarts there.
                 juce::int64 index = grid.nextStep;
+                auto pass = (juce::int64) std::floor ((double) index / (double) length);
                 if (! params.freeCycle)
+                {
+                    pass = (juce::int64) std::floor ((double) index / grid.barSteps);
                     index = (juce::int64) std::floor (std::fmod ((double) index, grid.barSteps) + (index < 0 ? grid.barSteps : 0.0));
+                }
 
-                fire (pos, (int) (((index % length) + length) % length), stepDuration (grid.nextStep), out);
+                fire (pos, (int) (((index % length) + length) % length), pass, stepDuration (grid.nextStep), out);
                 ++grid.nextStep;
             }
 
@@ -295,20 +357,38 @@ private:
                 freeStep = 0;
 
             const double duration = stepDuration (freeCount);
-            fire (juce::jmax (from, (int) std::floor (freeNext + 1.0e-6)), freeStep, duration, out);
+            fire (juce::jmax (from, (int) std::floor (freeNext + 1.0e-6)), freeStep, freePass, duration, out);
             freeStep = (freeStep + 1) % length;
+            if (freeStep == 0)
+                ++freePass;
             ++freeCount;
             freeNext += stepSamples * duration;
         }
     }
 
-    void fire (int pos, int index, double duration, juce::MidiBuffer& out)
+    const SeqPattern& patternFor (juce::int64 pass) noexcept
+    {
+        if (params.bank == nullptr)
+            return *params.pattern;
+
+        int which = selected;
+        if (params.chainOn && params.bank->chainLength > 0)
+        {
+            const auto length = (juce::int64) params.bank->chainLength;
+            which = params.bank->chain[(size_t) (((pass % length) + length) % length)];
+        }
+
+        shownPattern = juce::jlimit (0, SeqBank::numPatterns - 1, which);
+        return params.bank->patterns[(size_t) shownPattern];
+    }
+
+    void fire (int pos, int index, juce::int64 pass, double duration, juce::MidiBuffer& out)
     {
         if (! hasRoot)
             return;
 
         shownStep = index;
-        const auto& step = params.pattern->steps[(size_t) index];
+        const auto& step = patternFor (pass).steps[(size_t) index];
         if (step.gate <= 0.0f)
             return; // a rest
 
@@ -355,8 +435,8 @@ private:
     HeldKey root { 60, 1.0f, 1 };
 
     bool wasOn = false, wasPlaying = false, hasRoot = false;
-    int freeStep = 0, shownStep = -1;
-    juce::int64 freeCount = 0;
+    int freeStep = 0, shownStep = -1, shownPattern = 0, selected = 0, lastSelect = -1;
+    juce::int64 freeCount = 0, freePass = 0;
     double stepSamples = 6000.0, freeNext = 0.0;
 };
 } // namespace amv

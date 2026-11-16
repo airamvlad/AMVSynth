@@ -315,8 +315,9 @@ private:
     bool hasSourceBar() const noexcept { return currentPage < 4 || currentPage == 6; }
 
     // SEQ page.
-    enum SeqTool { seqOneBar, seqTwoBars, seqAccents, seqRandom, seqShiftLeft, seqShiftRight, seqReverse, seqClear, numSeqTools };
+    enum SeqTool { seqOneBar, seqTwoBars, seqAccents, seqRandom, seqShiftLeft, seqShiftRight, seqReverse, seqClear, seqCopy, seqPaste, numSeqTools };
     StepEditor stepEditor { processor };
+    PatternBar patternBar { processor };
     std::array<juce::TextButton, numSeqTools> seqButtons;
 
     // Modulation by drag and drop.

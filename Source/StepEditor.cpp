@@ -14,6 +14,7 @@ StepEditor::StepEditor (AMVSynthAudioProcessor& p) : processor (p)
     lengthParam = processor.apvts.getRawParameterValue (amv::id::seqSteps);
     meterParam = processor.apvts.getRawParameterValue (amv::id::seqMeter);
     onParam = processor.apvts.getRawParameterValue (amv::id::seqOn);
+    selectParam = processor.apvts.getRawParameterValue (amv::id::seqSelect);
     refresh();
 }
 
@@ -21,18 +22,20 @@ void StepEditor::refresh()
 {
     bool changed = false;
 
-    // The pattern can be replaced from outside, by a loaded project or preset file.
-    if (dragLane == noLane && &processor.getSeqPattern() != patternFrom)
+    // Another pattern can be chosen, and a pattern can be replaced from outside, by a loaded project or preset.
+    const int newSelect = juce::jlimit (0, amv::SeqBank::numPatterns - 1, juce::roundToInt (selectParam->load()));
+    if (dragLane == noLane && (processor.getSeqVersion() != shownVersion || newSelect != select))
     {
-        patternFrom = &processor.getSeqPattern();
-        pattern = *patternFrom;
+        select = newSelect;
+        shownVersion = processor.getSeqVersion();
+        pattern = processor.getSeqPattern (select);
         changed = true;
     }
 
     const int newLength = juce::jlimit (1, (int) amv::SeqPattern::maxSteps, juce::roundToInt (lengthParam->load()));
     const int newMeter = juce::roundToInt (meterParam->load());
     const bool newOn = onParam->load() > 0.5f;
-    const int newPlaying = newOn ? processor.seqStep.load (std::memory_order_relaxed) : -1;
+    const int newPlaying = newOn && processor.seqPatternPlaying.load (std::memory_order_relaxed) == select ? processor.seqStep.load (std::memory_order_relaxed) : -1;
 
     changed = changed || newLength != length || newMeter != meter || newOn != on || newPlaying != playing;
     length = newLength;
@@ -297,8 +300,8 @@ void StepEditor::edit (int lane, int step, float y)
 
 void StepEditor::commit (bool save)
 {
-    processor.setSeqPattern (pattern, save);
-    patternFrom = &processor.getSeqPattern();
+    processor.setSeqPattern (select, pattern, save);
+    shownVersion = processor.getSeqVersion();
     repaint();
 }
 
@@ -441,4 +444,217 @@ void StepEditor::clear()
 {
     pattern = {};
     commit (true);
+}
+
+void StepEditor::copy()
+{
+    clipboard = pattern;
+    hasClipboard = true;
+}
+
+void StepEditor::paste()
+{
+    if (! hasClipboard)
+        return;
+
+    pattern = clipboard;
+    commit (true);
+}
+
+//==============================================================================
+PatternBar::PatternBar (AMVSynthAudioProcessor& p) : processor (p)
+{
+    refresh();
+}
+
+void PatternBar::refresh()
+{
+    const auto value = [this] (const char* paramId) { return processor.apvts.getRawParameterValue (paramId)->load(); };
+    const int newSelect = juce::roundToInt (value (amv::id::seqSelect));
+    const bool newKeySwitch = value (amv::id::seqKeySwitch) > 0.5f, newChain = value (amv::id::seqChainOn) > 0.5f;
+    const int newPlaying = value (amv::id::seqOn) > 0.5f && processor.seqStep.load (std::memory_order_relaxed) >= 0
+                               ? processor.seqPatternPlaying.load (std::memory_order_relaxed) : -1;
+
+    bool changed = newSelect != select || newKeySwitch != keySwitchOn || newChain != chainIsOn || newPlaying != playing;
+    select = newSelect;
+    keySwitchOn = newKeySwitch;
+    chainIsOn = newChain;
+    playing = newPlaying;
+
+    if (processor.getSeqVersion() != version)
+    {
+        version = processor.getSeqVersion();
+        chainShown = processor.getSeqChain();
+        changed = true;
+    }
+
+    if (changed && isVisible())
+        repaint();
+}
+
+juce::Rectangle<float> PatternBar::row (int index) const
+{
+    const auto area = getLocalBounds().toFloat();
+    const float height = juce::jmin (32.0f, area.getHeight() / 3.0f);
+    const float top = area.getCentreY() - height * 1.5f;
+    return { area.getX(), top + height * (float) index, area.getWidth(), height };
+}
+
+juce::Rectangle<float> PatternBar::cell (int rowIndex, int index, int count) const
+{
+    const auto r = row (rowIndex);
+    const float width = r.getWidth() / (float) count;
+    return juce::Rectangle<float> (r.getX() + width * (float) index, r.getY(), width, r.getHeight()).reduced (2.5f, 3.5f);
+}
+
+int PatternBar::partAt (juce::Point<float> p, int& index) const
+{
+    for (int i = 0; i < amv::SeqBank::numPatterns; ++i)
+        if (cell (0, i, amv::SeqBank::numPatterns).contains (p))
+        {
+            index = i;
+            return letters;
+        }
+
+    for (int i = 0; i < 2; ++i)
+        if (cell (1, i, 2).contains (p))
+        {
+            index = 0;
+            return i == 0 ? keySwitch : chainOn;
+        }
+
+    for (int i = 0; i < amv::SeqBank::maxChain; ++i)
+        if (cell (2, i, amv::SeqBank::maxChain).contains (p))
+        {
+            index = i;
+            return chain;
+        }
+
+    index = -1;
+    return none;
+}
+
+void PatternBar::setParam (const char* paramId, float value)
+{
+    if (auto* param = processor.apvts.getParameter (paramId))
+        param->setValueNotifyingHost (param->convertTo0to1 (value));
+}
+
+juce::String PatternBar::getTooltip()
+{
+    switch (hoverPart)
+    {
+        case letters:   return "The pattern that is shown and played. The dot marks the one that is playing now.";
+        case keySwitch: return "The MIDI keys C0, C#0, D0 and D#0 choose pattern A, B, C or D while you play. They make no sound.";
+        case chainOn:   return "Play the patterns in the boxes below one after the other. Each one plays once through, or for one bar when FREE CYCLE is off.";
+        case chain:     return "The chain. Click a box to step it through A to D, click the first empty box to add one, right-click to remove one.";
+        default:        return {};
+    }
+}
+
+void PatternBar::paint (juce::Graphics& g)
+{
+    using namespace amv;
+    g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+
+    for (int i = 0; i < SeqBank::numPatterns; ++i)
+    {
+        const auto r = cell (0, i, SeqBank::numPatterns);
+        const bool chosen = i == select, hover = hoverPart == letters && hoverIndex == i;
+        g.setColour (chosen ? colour::red : colour::knob.brighter (hover ? 0.15f : 0.0f));
+        g.fillRoundedRectangle (r, 5.0f);
+        g.setColour (chosen ? colour::background : colour::text);
+        g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), r, juce::Justification::centred);
+
+        if (i == playing)
+        {
+            g.setColour (chosen ? colour::background : colour::teal);
+            g.fillEllipse (r.getRight() - 11.0f, r.getY() + 5.0f, 5.0f, 5.0f);
+        }
+    }
+
+    const char* names[2] { "KEY SWITCH", "CHAIN" };
+    for (int i = 0; i < 2; ++i)
+    {
+        const auto r = cell (1, i, 2);
+        const bool isOn = i == 0 ? keySwitchOn : chainIsOn, hover = hoverPart == (i == 0 ? keySwitch : chainOn);
+        g.setColour (isOn ? colour::red : colour::background);
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        g.setColour (isOn ? colour::red : colour::balkanBorder.brighter (hover ? 0.4f : 0.0f));
+        g.drawRoundedRectangle (r.reduced (0.5f), r.getHeight() * 0.5f, 1.0f);
+        g.setColour (isOn ? colour::background : colour::text);
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText (names[i], r, juce::Justification::centred);
+    }
+
+    for (int i = 0; i < SeqBank::maxChain; ++i)
+    {
+        const auto r = cell (2, i, SeqBank::maxChain);
+        const bool filled = i < (int) chainShown.size(), hover = hoverPart == chain && hoverIndex == i;
+        const float alpha = chainIsOn ? 1.0f : 0.45f;
+
+        if (filled)
+        {
+            g.setColour ((chainShown[(size_t) i] == playing && chainIsOn ? colour::teal : colour::track.brighter (hover ? 0.2f : 0.0f)).withAlpha (alpha));
+            g.fillRoundedRectangle (r, 4.0f);
+            g.setColour ((chainShown[(size_t) i] == playing && chainIsOn ? colour::background : colour::text).withAlpha (alpha));
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + chainShown[(size_t) i])), r, juce::Justification::centred);
+        }
+        else
+        {
+            g.setColour (colour::track.withAlpha ((hover && i == (int) chainShown.size() ? 1.0f : 0.5f) * alpha));
+            g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+        }
+    }
+}
+
+void PatternBar::mouseDown (const juce::MouseEvent& e)
+{
+    int index = -1;
+    switch (partAt (e.position, index))
+    {
+        case letters:   setParam (amv::id::seqSelect, (float) index); break;
+        case keySwitch: setParam (amv::id::seqKeySwitch, keySwitchOn ? 0.0f : 1.0f); break;
+        case chainOn:   setParam (amv::id::seqChainOn, chainIsOn ? 0.0f : 1.0f); break;
+        case chain:
+        {
+            auto next = chainShown;
+            if (e.mods.isPopupMenu())
+            {
+                if (index < (int) next.size() && next.size() > 1)
+                    next.erase (next.begin() + index);
+            }
+            else if (index < (int) next.size())
+                next[(size_t) index] = (next[(size_t) index] + 1) % amv::SeqBank::numPatterns;
+            else if (next.size() < (size_t) amv::SeqBank::maxChain)
+                next.push_back (0);
+
+            processor.setSeqChain (next);
+            break;
+        }
+        default: break;
+    }
+
+    refresh();
+    repaint();
+}
+
+void PatternBar::mouseMove (const juce::MouseEvent& e)
+{
+    int index = -1;
+    const int part = partAt (e.position, index);
+    if (part != hoverPart || index != hoverIndex)
+    {
+        hoverPart = part;
+        hoverIndex = index;
+        repaint();
+    }
+}
+
+void PatternBar::mouseExit (const juce::MouseEvent&)
+{
+    hoverPart = none;
+    hoverIndex = -1;
+    repaint();
 }

@@ -65,12 +65,23 @@ public:
     /** The points of the drawn shape of an LFO. Message thread only. */
     const std::vector<amv::LfoPoint>& getLfoPoints (int lfo) const noexcept { return activeLfoShape[(size_t) lfo].load()->getPoints(); }
 
-    /** Sets the pattern of the step sequencer. With `save` off the project state is not updated
-        yet; call it again with `save` on when the edit is finished. Message thread only. */
-    void setSeqPattern (const amv::SeqPattern&, bool save);
+    /** Sets one of the four patterns of the step sequencer (0 to 3). With `save` off the project
+        state is not updated yet; call it again with `save` on when the edit is finished. Message
+        thread only. */
+    void setSeqPattern (int index, const amv::SeqPattern&, bool save);
 
-    /** The pattern of the step sequencer. Message thread only. */
-    const amv::SeqPattern& getSeqPattern() const noexcept { return *activeSeqPattern.load(); }
+    /** One of the patterns of the step sequencer. Message thread only. */
+    const amv::SeqPattern& getSeqPattern (int index) const noexcept { return seqBank.patterns[(size_t) index]; }
+
+    /** The order the chain plays the patterns in: up to eight numbers from 0 to 3. Message thread only. */
+    void setSeqChain (const std::vector<int>& chain);
+    std::vector<int> getSeqChain() const;
+
+    /** Counts up whenever a pattern or the chain was changed, so a display knows to read them again. */
+    int getSeqVersion() const noexcept { return seqVersion; }
+
+    /** The pattern the step that played last came from, for the display. */
+    std::atomic<int> seqPatternPlaying { 0 };
 
     /** The step the sequencer played last, or -1 when it is silent, for the display. */
     std::atomic<int> seqStep { -1 };
@@ -149,15 +160,19 @@ private:
     };
     std::vector<StoredShape> lfoShapeStore;
 
-    // The sequencer pattern, handed over the same way. There is always one.
+    // The sequencer patterns and the chain, handed over the same way. `seqBank` is the copy the
+    // message thread edits; every change publishes a new copy to the audio thread.
+    void publishSeqBank();
     void restoreSeqPattern();
-    std::atomic<const amv::SeqPattern*> activeSeqPattern { nullptr };
-    struct StoredPattern
+    amv::SeqBank seqBank;
+    int seqVersion = 0;
+    std::atomic<const amv::SeqBank*> activeSeqBank { nullptr };
+    struct StoredBank
     {
-        std::unique_ptr<amv::SeqPattern> pattern;
+        std::unique_ptr<amv::SeqBank> bank;
         juce::uint32 retiredAt = 0;
     };
-    std::vector<StoredPattern> seqPatternStore;
+    std::vector<StoredBank> seqBankStore;
 
     // The numbered modulation parameters are looked up once, their names are built at run time.
     struct LfoRefs { std::atomic<float>* shape; std::atomic<float>* rate; std::atomic<float>* sync; std::atomic<float>* division; std::atomic<float>* mode; };
