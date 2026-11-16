@@ -24,7 +24,74 @@ struct Preset
     const char* category;            // the group it is listed under in the browser
     std::vector<SeqStep> sequence;   // steps of the sequencer; the rest keep their defaults
     Shapes lfoShapes;                // drawn shapes, by LFO (0 to 3)
+    std::array<juce::String, mod::numMacros> macroNames; // what each macro does in this preset; empty for "MACRO 1" and so on
 };
+
+/** The name a macro has until a preset or the user gives it one. */
+inline juce::String defaultMacroName (int index) { return "MACRO " + juce::String (index + 1); }
+
+/** Gives a factory preset its four macros.
+
+    A macro the preset already uses is named after what it moves. The others are wired in free
+    modulation slots to the same four things in every preset, so the macros always do something
+    and mean the same everywhere: BRIGHT opens the filter (DARK closes it instead, in a preset
+    whose filter is already open), EDGE adds resonance, VIBRATO adds
+    vibrato and TIMBRE moves the first control of the Balkan model, or the wavetable position of
+    oscillator A when the model is silent. All of them rest at zero, so the preset itself sounds
+    as it was made. */
+inline void wirePresetMacros (Preset& preset)
+{
+    const auto find = [&preset] (const juce::String& paramId, float fallback)
+    {
+        for (const auto& [name, value] : preset.values)
+            if (name == paramId)
+                return value;
+        return fallback;
+    };
+
+    std::array<bool, mod::numSlots> used {};
+    std::array<bool, mod::numMacros> wired {};
+
+    for (int slot = 0; slot < mod::numSlots; ++slot)
+    {
+        const int source = juce::roundToInt (find (id::slot (slot, "Source"), 0.0f));
+        used[(size_t) slot] = source != mod::srcNone;
+
+        const int macro = source - mod::srcMacro1;
+        if (macro >= 0 && macro < mod::numMacros && ! wired[(size_t) macro])
+        {
+            // Slot 1 goes to the cutoff when nothing else is said, the others to pitch.
+            const int dest = juce::roundToInt (find (id::slot (slot, "Dest"), slot == 0 ? (float) mod::dstCutoff : (float) mod::dstPitch));
+            wired[(size_t) macro] = true;
+            preset.macroNames[(size_t) macro] = juce::String (getModDests()[(size_t) juce::jlimit (0, (int) mod::numDests - 1, dest)]).toUpperCase();
+        }
+    }
+
+    const bool engineSounds = find (id::engineLevel, 0.8f) > 0.0f;
+    struct Wiring { const char* name; int dest; float amount; };
+    const bool filterOpen = find (id::cutoff, 3200.0f) >= 6000.0f; // nothing left to open, so the macro closes it
+    const Wiring wirings[mod::numMacros] { { filterOpen ? "DARK" : "BRIGHT", mod::dstCutoff, filterOpen ? -0.5f : 0.4f },
+                                           { "EDGE", mod::dstResonance, 0.5f },
+                                           { "VIBRATO", mod::dstVibrato, 0.5f },
+                                           { "TIMBRE", engineSounds ? (int) mod::dstEngine1 : (int) mod::dstOscAPosition, 0.5f } };
+
+    for (int macro = 0; macro < mod::numMacros; ++macro)
+    {
+        if (wired[(size_t) macro])
+            continue;
+
+        for (int slot = 0; slot < mod::numSlots; ++slot)
+            if (! used[(size_t) slot])
+            {
+                used[(size_t) slot] = true;
+                preset.values.emplace_back (id::slot (slot, "Source"), (float) (mod::srcMacro1 + macro));
+                preset.values.emplace_back (id::slot (slot, "Dest"), (float) wirings[macro].dest);
+                preset.values.emplace_back (id::slot (slot, "Amount"), wirings[macro].amount);
+                preset.macroNames[(size_t) macro] = wirings[macro].name;
+                break;
+            }
+    }
+}
 
 /** The groups of the factory presets, in the order the browser lists them. */
 inline const std::array<const char*, 6>& getPresetCategories()
@@ -52,7 +119,9 @@ inline const std::vector<Preset>& getFactoryPresets()
     enum { filter1 = 0, filter2 };
     enum { toPitch = 0, toCutoff, toRes, toPosA, toPosB, toLevelA, toLevelB, toEngine, toNoise, toVolume };
 
-    static const std::vector<Preset> presets {
+    static const std::vector<Preset> presets = []
+    {
+        std::vector<Preset> list {
         { "Init", {}, "Init" },
 
         { "Juzni Vetar Lead", {
@@ -492,7 +561,14 @@ inline const std::vector<Preset>& getFactoryPresets()
             { ampA, 0.5f }, { ampD, 150.0f }, { ampS, 0.0f }, { ampR, 40.0f },
             { compOn, 1 }, { compThreshold, -24.0f }, { compRatio, 6.0f }, { compAttack, 20.0f }, { compRelease, 80.0f }, { compMakeup, 6.0f },
             { eqOn, 1 }, { eqLow, 3.0f }, { eqMid, -4.0f }, { eqMidFreq, 400.0f }, { eqHigh, 2.0f } }, "Bass" },
-    };
+        };
+
+        // Init stays empty; every other preset gets its macros.
+        for (size_t i = 1; i < list.size(); ++i)
+            wirePresetMacros (list[i]);
+
+        return list;
+    }();
 
     return presets;
 }

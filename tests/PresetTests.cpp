@@ -320,6 +320,101 @@ int main()
         check (peak > 0.01f && lastStep >= 3 && lastStep < 7, "the sequencer plays from a held key and reports its step");
     }
 
+    // Every factory preset has its four macros named and wired; the names follow the preset and the project.
+    {
+        const auto check = [&failures] (bool ok, const char* what)
+        {
+            std::printf ("%s  %s\n", ok ? "ok  " : "FAIL", what);
+            failures += ok ? 0 : 1;
+        };
+
+        const auto& presets = amv::getFactoryPresets();
+        bool named = true, wired = true, single = true, resting = true;
+
+        for (size_t i = 1; i < presets.size(); ++i)
+        {
+            std::array<int, amv::mod::numMacros> sources {};
+            std::array<int, amv::mod::numSlots> sourceEntries {};
+
+            for (const auto& [name, value] : presets[i].values)
+            {
+                for (int slot = 0; slot < amv::mod::numSlots; ++slot)
+                    if (name == amv::id::slot (slot, "Source"))
+                    {
+                        ++sourceEntries[(size_t) slot];
+                        const int macro = juce::roundToInt (value) - amv::mod::srcMacro1;
+                        if (macro >= 0 && macro < amv::mod::numMacros)
+                            ++sources[(size_t) macro];
+                    }
+
+                for (int macro = 0; macro < amv::mod::numMacros; ++macro)
+                    if (name == amv::id::macro (macro) && value != 0.0f)
+                        resting = false;
+            }
+
+            for (int macro = 0; macro < amv::mod::numMacros; ++macro)
+            {
+                named = named && presets[i].macroNames[(size_t) macro].isNotEmpty();
+                wired = wired && sources[(size_t) macro] >= 1;
+            }
+
+            for (const int entries : sourceEntries)
+                single = single && entries <= 1;
+
+            if (! (named && wired && single))
+            {
+                std::printf ("      first preset with a macro problem: %s\n", presets[i].name);
+                break;
+            }
+        }
+
+        check (named && wired, "every factory preset names and wires its four macros");
+        check (single && resting, "the macros use free slots only and rest at zero");
+
+        std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());
+        auto* first = dynamic_cast<AMVSynthAudioProcessor*> (plugin.get());
+        check (first->getMacroName (0) == "MACRO 1" && first->getMacroName (3) == "MACRO 4", "the macros start with their plain names");
+
+        plugin->setCurrentProgram (1);
+        bool follows = true;
+        for (int macro = 0; macro < amv::mod::numMacros; ++macro)
+            follows = follows && first->getMacroName (macro) == presets[1].macroNames[(size_t) macro];
+        check (follows, "a preset gives the macros its names");
+
+        first->setMacroName (1, "  growl of the long kind  ");
+        check (first->getMacroName (1) == "GROWL OF THE L", "a macro name is trimmed, shortened and in capitals");
+
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        std::unique_ptr<juce::AudioProcessor> other (createPluginFilter());
+        other->setStateInformation (state.getData(), (int) state.getSize());
+        auto* second = dynamic_cast<AMVSynthAudioProcessor*> (other.get());
+        check (second->getMacroName (1) == "GROWL OF THE L" && second->getMacroName (0) == presets[1].macroNames[0], "the macro names are saved with the project");
+
+        plugin->setCurrentProgram (0);
+        check (first->getMacroName (0) == "MACRO 1" && first->getMacroName (1) == "MACRO 2", "Init gives the macros their plain names back");
+
+        // The wiring reaches the parameters: in Psy Bass the first macro opens the filter from the first slot.
+        int bass = -1;
+        for (size_t i = 0; i < presets.size(); ++i)
+            if (juce::String (presets[i].name) == "Psy Bass")
+                bass = (int) i;
+
+        plugin->setCurrentProgram (bass);
+        const auto value = [first] (const juce::String& paramId)
+        {
+            auto* param = first->apvts.getParameter (paramId);
+            return param->convertFrom0to1 (param->getValue());
+        };
+        check (bass > 0 && first->getMacroName (0) == "BRIGHT" && first->getMacroName (3) == "TIMBRE"
+                   && juce::roundToInt (value (amv::id::slot (0, "Source"))) == amv::mod::srcMacro1
+                   && juce::roundToInt (value (amv::id::slot (0, "Dest"))) == amv::mod::dstCutoff
+                   && std::abs (value (amv::id::slot (0, "Amount")) - 0.4f) < 0.01f
+                   && juce::roundToInt (value (amv::id::slot (3, "Dest"))) == amv::mod::dstOscAPosition
+                   && value (amv::id::macro (0)) == 0.0f,
+               "a preset loads its macro wiring into the modulation slots");
+    }
+
     // A drawn LFO shape is saved with the project, and a modulated effect is heard.
     {
         std::unique_ptr<juce::AudioProcessor> plugin (createPluginFilter());

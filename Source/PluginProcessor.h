@@ -86,6 +86,11 @@ public:
     /** The step the sequencer played last, or -1 when it is silent, for the display. */
     std::atomic<int> seqStep { -1 };
 
+    /** The name of a macro (0 to 3), as shown on its knob. It is saved with the project and set
+        by the factory presets. Message thread only. */
+    juce::String getMacroName (int index) const;
+    void setMacroName (int index, const juce::String& name);
+
     /** Where each LFO is in its cycle, 0..1, for the display. */
     std::array<std::atomic<float>, amv::mod::numLfos> lfoPhases {};
 

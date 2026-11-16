@@ -13,6 +13,7 @@ What it does:
 - Envelope times and the effects are modulation destinations too: amp and filter attack, decay and release, distortion drive and mix, gate depth, delay feedback, tone and mix, reverb size and mix, the bitcrusher rate and the chorus, flanger and phaser mix
 - Warp on both wavetable oscillators (Bend +, Bend -, PWM, Sync, Mirror) with a WARP knob that can be modulated, and a 3D view of all frames of the table with the playing position marked
 - FM, ring and amplitude modulation of each wavetable oscillator by the other oscillator, the sub, the noise, the Balkan engine or the sampler. The modulator works even with its own level turned down, and the amount is a modulation destination
+- Four macros on the main page, named by the preset: every factory preset wires them (BRIGHT or DARK, EDGE, VIBRATO, TIMBRE unless the preset uses a macro for something of its own), and a double click on a name changes it
 - Modulation on its own page: four LFOs (free or tempo-synced), a third envelope, four macros and an eight slot matrix with LFOs, envelopes, velocity, mod wheel, macros, pressure and timbre as sources
 - 50 factory presets for the folk models and for psytrance basses, leads, pads, arps and sequences, plus saving and loading your own presets as files
 - Preset browser (BROWSE in the header): the factory presets by category, your own presets from the `AMVSynth Presets` folder in Documents (subfolders included), a search box and favourites. A click or the arrow keys load a preset straight away, so you can play through the list

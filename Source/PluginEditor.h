@@ -343,6 +343,7 @@ private:
     size_t lfoSection = 0;
     void showLfo (int index);
     TextDisplay lfoHelp;
+    std::array<juce::Label*, amv::mod::numMacros> macroLabels {};
     TextDisplay helpDisplay;
     juce::Label statusLabel;
     int statusTicks = 0;

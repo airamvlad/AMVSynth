@@ -202,18 +202,40 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         s.knobs = makeKnobs (true, { { id::ornSpeed, "SPEED" }, { id::ornAmount, "AMOUNT" }, { id::ornChance, "CHANCE" } });
     }
 
-    // Row 2: the odd-meter arpeggiator.
+    // Row 2: the odd-meter arpeggiator and the macros.
     {
-        auto& s = addSection ("ODD-METER ARP", true, 2, 1.0f);
-        s.columnsInColumn = 3;
+        auto& s = addSection ("ODD-METER ARP", true, 2, 6.6f);
+        s.columnsInColumn = 2;
+        s.columnWidth = 114;
+        s.displayShare = 0.36f;
         s.column.push_back (&makeToggle (id::arpOn, "ARP ON", true)->button);
         s.column.push_back (&makeChoice (id::arpMeter, true)->box);
         s.column.push_back (&makeChoice (id::arpRate, true)->box);
-        s.column.push_back (&makeToggle (id::arpPolymeter, "POLYMETER", true)->button);
         s.column.push_back (&makeChoice (id::arpMode, true)->box);
+        s.column.push_back (&makeToggle (id::arpPolymeter, "POLYMETER", true)->button);
         s.display = &patternDisplay;
         s.knobs = makeKnobs (true, { { id::arpOctaves, "OCTAVES" }, { id::arpGate, "GATE" }, { id::arpAccent, "ACCENT" } });
         addChildComponent (patternDisplay);
+    }
+    {
+        // The four macros, with the names the preset gave them. A double click on a name changes it.
+        auto& s = addSection ("MACROS", false, 2, 4.4f);
+        s.knobs = makeKnobs (false, { { id::macro (0), "MACRO 1" }, { id::macro (1), "MACRO 2" }, { id::macro (2), "MACRO 3" }, { id::macro (3), "MACRO 4" } });
+        for (size_t i = 0; i < s.knobs.size(); ++i)
+        {
+            auto& label = s.knobs[i]->label;
+            macroLabels[i] = &label;
+            label.setEditable (false, true, false);
+            label.setColour (juce::Label::textColourId, colour::forSource (mod::srcMacro1 + (int) i));
+            label.setColour (juce::Label::textWhenEditingColourId, colour::text);
+            label.setColour (juce::Label::backgroundWhenEditingColourId, colour::background);
+            label.setTooltip ("Double-click to name this macro. Drag M" + juce::String (i + 1) + " from the MOD SOURCES row onto a knob to let the macro move it.");
+            label.onTextChange = [this, i]
+            {
+                processor.setMacroName ((int) i, macroLabels[i]->getText());
+                macroLabels[i]->setText (processor.getMacroName ((int) i), juce::dontSendNotification);
+            };
+        }
     }
 
     // Row 3: filter, envelopes, output.
@@ -927,6 +949,11 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     sampleDisplay.refresh();
     stepEditor.refresh();
     patternBar.refresh();
+
+    // A preset or a loaded project can rename the macros.
+    for (size_t i = 0; i < macroLabels.size(); ++i)
+        if (macroLabels[i] != nullptr && ! macroLabels[i]->isBeingEdited() && macroLabels[i]->getText() != processor.getMacroName ((int) i))
+            macroLabels[i]->setText (processor.getMacroName ((int) i), juce::dontSendNotification);
     updateSampleInfo();
 
     if (meterChanged && levelMeter.isVisible())

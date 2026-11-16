@@ -385,6 +385,8 @@ void AMVSynthAudioProcessor::setCurrentProgram (int index)
     const auto& preset = presets[(size_t) index];
     currentPreset = index;
     amv::applyPreset (apvts, preset);
+    for (int i = 0; i < amv::mod::numMacros; ++i)
+        setMacroName (i, preset.macroNames[(size_t) i]);
 
     // The sequence and the drawn LFO shapes are not parameters; a preset without them gets the defaults.
     amv::SeqPattern pattern;
@@ -651,6 +653,23 @@ void AMVSynthAudioProcessor::restoreSample()
     // A state without a sample keeps the one that is loaded now.
     if (activeSample.load() != nullptr)
         storeSample();
+}
+
+juce::String AMVSynthAudioProcessor::getMacroName (int index) const
+{
+    const auto name = apvts.state.getProperty ("macroName" + juce::String (index + 1)).toString().trim();
+    return name.isEmpty() ? amv::defaultMacroName (index) : name;
+}
+
+void AMVSynthAudioProcessor::setMacroName (int index, const juce::String& name)
+{
+    const auto trimmed = name.trim().substring (0, 14).toUpperCase();
+    const juce::Identifier property ("macroName" + juce::String (index + 1));
+
+    if (trimmed.isEmpty() || trimmed == amv::defaultMacroName (index))
+        apvts.state.removeProperty (property, nullptr);
+    else
+        apvts.state.setProperty (property, trimmed, nullptr);
 }
 
 void AMVSynthAudioProcessor::setLfoShape (int lfo, std::vector<amv::LfoPoint> points, bool save)
