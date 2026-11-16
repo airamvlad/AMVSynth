@@ -440,6 +440,83 @@ void AMVSynthAudioProcessor::setStateInformation (const void* data, int sizeInBy
         }
 }
 
+void AMVSynthAudioProcessor::undoBaseline()
+{
+    juce::MemoryBlock now;
+    getStateInformation (now);
+
+    if (historyIndex < 0)
+    {
+        history.assign (1, now);
+        historyIndex = 0;
+    }
+    else if (history[(size_t) historyIndex] != now)
+    {
+        history[(size_t) historyIndex] = std::move (now);
+    }
+}
+
+bool AMVSynthAudioProcessor::undoCheckpoint()
+{
+    if (historyIndex < 0)
+    {
+        undoBaseline();
+        return false;
+    }
+
+    juce::MemoryBlock now;
+    getStateInformation (now);
+    if (history[(size_t) historyIndex] == now)
+        return false;
+
+    // A new step ends what could be redone.
+    history.resize ((size_t) historyIndex + 1);
+    history.push_back (std::move (now));
+    ++historyIndex;
+    trimHistory();
+    return true;
+}
+
+void AMVSynthAudioProcessor::trimHistory()
+{
+    // At most a hundred steps, and less when the states are large because of a sample.
+    static constexpr size_t maxSteps = 100, maxBytes = 96u << 20;
+
+    const auto bytes = [this]
+    {
+        size_t sum = 0;
+        for (const auto& state : history)
+            sum += state.getSize();
+        return sum;
+    };
+
+    while (history.size() > 2 && historyIndex > 1 && (history.size() > maxSteps || bytes() > maxBytes))
+    {
+        history.erase (history.begin());
+        --historyIndex;
+    }
+}
+
+void AMVSynthAudioProcessor::undo()
+{
+    if (! canUndo())
+        return;
+
+    --historyIndex;
+    const auto state = history[(size_t) historyIndex];
+    setStateInformation (state.getData(), (int) state.getSize());
+}
+
+void AMVSynthAudioProcessor::redo()
+{
+    if (! canRedo())
+        return;
+
+    ++historyIndex;
+    const auto state = history[(size_t) historyIndex];
+    setStateInformation (state.getData(), (int) state.getSize());
+}
+
 namespace
 {
 const char* const userWaveData[2] { "userWaveA", "userWaveB" };

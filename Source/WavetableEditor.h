@@ -26,6 +26,9 @@ public:
     /** Chooses the oscillator to edit, 0 for A and 1 for B, and loads its table. */
     void setOscillator (int osc);
 
+    /** Loads the table again after it changed from outside, for example with an undo. */
+    void reload() { if (isVisible()) load(); }
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void visibilityChanged() override;

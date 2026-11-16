@@ -728,6 +728,15 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 
     presetBox.setColour (juce::ComboBox::outlineColourId, colour::panelBorder);
     addAndMakeVisible (presetBox);
+
+    undoButton.setTooltip ("Undo the last change: a control, a preset, a pattern, a drawn wavetable or LFO shape. Also Ctrl+Z or Cmd+Z.");
+    redoButton.setTooltip ("Redo what was undone. Also Ctrl+Shift+Z, Cmd+Shift+Z or Ctrl+Y.");
+    undoButton.onClick = [this] { stepHistory (false); };
+    redoButton.onClick = [this] { stepHistory (true); };
+    addAndMakeVisible (undoButton);
+    addAndMakeVisible (redoButton);
+    juce::Desktop::getInstance().addGlobalMouseListener (&actionWatcher);
+    processor.undoBaseline();
     for (auto* button : { &prevPreset, &nextPreset, &savePreset, &browsePreset })
     {
         button->setColour (juce::TextButton::buttonColourId, colour::header);
@@ -756,6 +765,7 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
 AMVSynthAudioProcessorEditor::~AMVSynthAudioProcessorEditor()
 {
     stopTimer();
+    juce::Desktop::getInstance().removeGlobalMouseListener (&actionWatcher);
     setLookAndFeel (nullptr);
 }
 
@@ -928,8 +938,98 @@ void AMVSynthAudioProcessorEditor::updateVisibility()
     }
 }
 
+void AMVSynthAudioProcessorEditor::HistoryButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    using namespace amv;
+    const auto area = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (down ? colour::track : colour::header.brighter (highlighted && isEnabled() ? 0.12f : 0.04f));
+    g.fillRoundedRectangle (area, 5.0f);
+    g.setColour (colour::panelBorder);
+    g.drawRoundedRectangle (area, 5.0f, 1.0f);
+
+    // Most of a circle with an arrow head where it ends: on the left for undo.
+    const auto centre = area.getCentre().translated (0.0f, 1.0f);
+    const float radius = 5.0f, pi = juce::MathConstants<float>::pi;
+    juce::Path arrow;
+    arrow.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, -0.5f * pi, 0.9f * pi, true);
+    const float tipX = centre.x - radius, tipY = centre.y;
+    arrow.startNewSubPath (tipX - 3.5f, tipY - 3.0f);
+    arrow.lineTo (tipX, tipY + 0.5f);
+    arrow.lineTo (tipX + 3.5f, tipY - 3.0f);
+
+    if (redo)
+        arrow.applyTransform (juce::AffineTransform::scale (-1.0f, 1.0f, centre.x, centre.y));
+
+    g.setColour (isEnabled() ? colour::text : colour::dimText.withAlpha (0.35f));
+    g.strokePath (arrow, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
+void AMVSynthAudioProcessorEditor::userActionStarted()
+{
+    // What changed while nobody touched anything, automation for example, is not the user's to undo.
+    if (juce::Time::getMillisecondCounter() > watchChangesUntil)
+        processor.undoBaseline();
+}
+
+void AMVSynthAudioProcessorEditor::userActionEnded()
+{
+    // A popup menu or a file dialog sets its value a moment after the click.
+    watchChangesUntil = juce::Time::getMillisecondCounter() + 1200;
+}
+
+void AMVSynthAudioProcessorEditor::stepHistory (bool redo)
+{
+    // What was just done becomes a step first, so that it is the one taken back.
+    processor.undoCheckpoint();
+
+    if (redo)
+        processor.redo();
+    else
+        processor.undo();
+
+    watchChangesUntil = 0;
+    waveEditor.reload();
+}
+
+bool AMVSynthAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    const auto mods = key.getModifiers();
+
+    if (mods.isCommandDown() && (key.getKeyCode() == 'z' || key.getKeyCode() == 'Z'))
+    {
+        stepHistory (mods.isShiftDown());
+        return true;
+    }
+
+    if (mods.isCommandDown() && (key.getKeyCode() == 'y' || key.getKeyCode() == 'Y'))
+    {
+        stepHistory (true);
+        return true;
+    }
+
+    return false;
+}
+
 void AMVSynthAudioProcessorEditor::timerCallback()
 {
+    // Undo and redo: a few times a second, look for what the user changed. While a mouse button
+    // is down the change is still being made.
+    if (++historyTick >= 5)
+    {
+        historyTick = 0;
+        const bool busy = juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown();
+
+        // Typing a value ends with Return or a click elsewhere, not always with the mouse.
+        if (dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) != nullptr)
+            watchChangesUntil = juce::Time::getMillisecondCounter() + 1200;
+
+        if (! busy && juce::Time::getMillisecondCounter() <= watchChangesUntil)
+            processor.undoCheckpoint();
+
+        undoButton.setEnabled (processor.canUndo());
+        redoButton.setEnabled (processor.canRedo());
+    }
+
     // The host can change the program too.
     if (shownPreset >= 0 && processor.getCurrentProgram() != shownPreset)
     {
@@ -2356,7 +2456,7 @@ void AMVSynthAudioProcessorEditor::paint (juce::Graphics& g)
     logo.removeFromLeft (10);
     g.setColour (colour::text);
     g.setFont (juce::FontOptions (19.0f, juce::Font::bold));
-    g.drawText ("AMVSYNTH", logo.removeFromLeft (140), juce::Justification::centredLeft);
+    g.drawText ("AMVSYNTH", logo.removeFromLeft (112), juce::Justification::centredLeft);
     g.setColour (colour::dimText);
     g.setFont (juce::FontOptions (11.0f));
     g.drawText ("v" JucePlugin_VersionString, logo.removeFromLeft (50), juce::Justification::centredLeft);
@@ -2457,13 +2557,17 @@ void AMVSynthAudioProcessorEditor::resized()
     headerArea.removeFromRight (16);
     for (size_t i = tabs.size(); i-- > 0;)
     {
-        static constexpr int widths[] { 56, 46, 52, 66, 44, 46, 40, 56 };
+        static constexpr int widths[] { 53, 43, 49, 63, 41, 43, 37, 53 };
         tabs[i].setBounds (headerArea.removeFromRight (widths[i]));
         headerArea.removeFromRight (3);
     }
 
     // The preset bar fills the space between the logo and the tabs.
-    headerArea.removeFromLeft (250);
+    headerArea.removeFromLeft (222);
+    undoButton.setBounds (headerArea.removeFromLeft (24));
+    headerArea.removeFromLeft (2);
+    redoButton.setBounds (headerArea.removeFromLeft (24));
+    headerArea.removeFromLeft (8);
     headerArea.removeFromRight (14);
     browsePreset.setBounds (headerArea.removeFromRight (64));
     headerArea.removeFromRight (4);
