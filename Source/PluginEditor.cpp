@@ -312,12 +312,18 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         addChildComponent (waveB);
     }
     {
-        auto& s = addSection ("SUB", false, 2, 4.0f);
+        auto& s = addSection ("SUB", false, 2, 3.4f);
         s.column.push_back (&makeChoice (id::subOctave, false)->box);
         s.knobs = makeKnobs (false, { { id::subShape, "SHAPE" }, { id::subLevel, "LEVEL" } });
     }
-    addSection ("NOISE", false, 2, 3.0f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
-    addSection ("BALKAN ENGINE", true, 2, 2.0f).knobs = makeKnobs (true, { { id::engineLevel, "LEVEL" } });
+    addSection ("NOISE", false, 2, 2.4f).knobs = makeKnobs (false, { { id::noiseColor, "COLOR" }, { id::noiseLevel, "LEVEL" } });
+    {
+        // The model can be stacked: a detuned unison of it, or the notes of a chord from one key.
+        auto& s = addSection ("BALKAN ENGINE", true, 2, 5.0f);
+        s.columnWidth = 104;
+        s.column.push_back (&makeChoice (id::engineStackMode, true)->box);
+        s.knobs = makeKnobs (true, { { id::engineStack, "STACK" }, { id::engineStackDetune, "DETUNE" }, { id::engineStackSpread, "SPREAD" }, { id::engineLevel, "LEVEL" } });
+    }
     {
         // The second filter and which filter each source runs through.
         auto& s = addSection ("FILTER 2", false, 3, 4.0f);

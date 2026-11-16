@@ -561,6 +561,37 @@ inline const std::vector<Preset>& getFactoryPresets()
             { ampA, 0.5f }, { ampD, 150.0f }, { ampS, 0.0f }, { ampR, 40.0f },
             { compOn, 1 }, { compThreshold, -24.0f }, { compRatio, 6.0f }, { compAttack, 20.0f }, { compRelease, 80.0f }, { compMakeup, 6.0f },
             { eqOn, 1 }, { eqLow, 3.0f }, { eqMid, -4.0f }, { eqMidFreq, 400.0f }, { eqHigh, 2.0f } }, "Bass" },
+
+        // The Balkan models stacked: unisons and chords from one key.
+        { "Zurla Unison Wall", {
+            { level, -13.0f },
+            { model, zurlaModel }, { zurPressure, 0.8f }, { zurBite, 0.5f }, { zurGrowl, 0.2f }, { zurNasal, 0.6f },
+            { engineStack, 5.0f }, { engineStackMode, stack::unison }, { engineStackDetune, 22.0f }, { engineStackSpread, 0.9f },
+            { scale, hijaz }, { snap, 1 }, { ornGrace, 1 }, { ornChance, 40.0f }, { glide, 50.0f }, { vibDepth, 14.0f },
+            { cutoff, 9000.0f }, { delayOn, 1 }, { delayMix, 18.0f }, { reverbOn, 1 }, { reverbMix, 20.0f } }, "Lead" },
+
+        { "Violin Section", {
+            { level, -12.0f },
+            { model, violin }, { vioBow, 0.65f }, { vioPosition, 0.35f }, { vioScratch, 0.15f }, { vioBody, 0.6f },
+            { engineStack, 4.0f }, { engineStackMode, stack::unison }, { engineStackDetune, 16.0f }, { engineStackSpread, 0.8f },
+            { mono, 0 }, { glide, 0.0f }, { vibDepth, 18.0f }, { ampA, 90.0f }, { ampR, 380.0f },
+            { cutoff, 8000.0f }, { reverbOn, 1 }, { reverbSize, 0.7f }, { reverbMix, 30.0f } }, "Pad" },
+
+        { "Harmonika Minor Stab", {
+            { level, -14.0f },
+            { model, accordion }, { accBellows, 0.85f }, { accMusette, 8.0f }, { accRegister, 0.5f }, { accClick, 0.35f },
+            { engineStack, 3.0f }, { engineStackMode, stack::minorChord }, { engineStackDetune, 6.0f }, { engineStackSpread, 0.7f },
+            { vibDepth, 0.0f }, { glide, 0.0f }, { ampA, 1.0f }, { ampD, 260.0f }, { ampS, 0.25f }, { ampR, 120.0f },
+            { cutoff, 5200.0f }, { filterEnv, 0.25f }, { fltD, 180.0f }, { fltS, 0.2f },
+            { delayOn, 1 }, { delayTime, 2 }, { delayFeedback, 40.0f }, { delayMix, 22.0f }, { reverbOn, 1 }, { reverbMix, 16.0f } }, "Folk" },
+
+        { "Kaval Fifths Pad", {
+            { level, -12.0f },
+            { model, kaval }, { kavBreath, 0.6f }, { kavOverblow, 0.1f }, { kavNoise, 0.55f }, { kavThroat, 0.4f },
+            { engineStack, 4.0f }, { engineStackMode, stack::fifths }, { engineStackDetune, 10.0f }, { engineStackSpread, 1.0f },
+            { mono, 0 }, { glide, 0.0f }, { vibDepth, 10.0f }, { ampA, 220.0f }, { ampR, 600.0f },
+            { cutoff, 7000.0f }, { chorusOn, 1 }, { chorusMix, 30.0f }, { reverbOn, 1 }, { reverbSize, 0.8f }, { reverbMix, 36.0f } }, "Pad" },
+    
         };
 
         // Init stays empty; every other preset gets its macros.
