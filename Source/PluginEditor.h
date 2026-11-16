@@ -43,6 +43,8 @@ public:
 };
 } // namespace amv
 
+/** The whole interface at its own size of 1040 by 840. The window around it, AMVSynthWindow,
+    scales it. */
 class AMVSynthAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                            public juce::DragAndDropContainer,
                                            private juce::Timer
@@ -50,6 +52,9 @@ class AMVSynthAudioProcessorEditor final : public juce::AudioProcessorEditor,
 public:
     explicit AMVSynthAudioProcessorEditor (AMVSynthAudioProcessor&);
     ~AMVSynthAudioProcessorEditor() override;
+
+    /** Called by the size buttons on the SETUP page with the scale they ask for, 1 for 100 percent. */
+    std::function<void (float)> onZoom;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -300,6 +305,7 @@ private:
     EnvelopeDisplay ampEnvDisplay, filterEnvDisplay, env3Display;
     juce::TooltipWindow tooltipWindow { this };
     std::array<juce::TextButton, 2> importButtons;
+    std::array<juce::TextButton, 4> zoomButtons;
     WavetableEditor waveEditor { processor };
 
     // SAMPLE page.
@@ -354,3 +360,33 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthAudioProcessorEditor)
 };
+
+/** What the host shows: the interface, scaled to the size of the window.
+
+    The window keeps its proportions when its corner is dragged, and the buttons on the SETUP
+    page set it to 100, 125, 150 or 200 percent. Everything scales with it, the text too. The
+    size is remembered for the next window, in a small file next to the favourites. */
+class AMVSynthWindow final : public juce::AudioProcessorEditor
+{
+public:
+    static constexpr int baseWidth = 1040, baseHeight = 840;
+
+    explicit AMVSynthWindow (AMVSynthAudioProcessor&);
+    ~AMVSynthWindow() override;
+
+    void resized() override;
+
+    /** The scale that was used last, 1 when there is none yet. */
+    static float loadScale();
+    static void saveScale (float scale);
+    static juce::File scaleFile();
+
+    /** Keeps a scale between the smallest and the largest window. */
+    static float limitScale (float scale) noexcept { return juce::jlimit (0.75f, 2.0f, scale); }
+
+private:
+    AMVSynthAudioProcessorEditor content;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AMVSynthWindow)
+};
+
