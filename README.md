@@ -21,7 +21,8 @@ What it does:
   - The grid is grouped like the chosen meter (5/8, 7/8, 9/8, 11/8 or 4/4), and 1 BAR and 2 BARS set the length to it; any length from 1 to 32 steps works
   - A slide glides into the next step in Mono Legato, and ties two steps with the same note into one long note
   - Swing, a gate scale, latch, and a free cycle mode that lets an odd pattern run over a 4/4 bar, or restart on every bar
-  - Pattern tools: accents from the meter, random notes from the chosen scale, shift, reverse and clear. The pattern is saved with the project and in preset files
+  - Four patterns, A to D, per sound. The pattern is chosen on the page or by automation, with KEY SWITCH also by the MIDI keys C0 to D#0 while you play, and CHAIN plays up to eight of them one after the other
+  - Pattern tools: accents from the meter, random notes from the chosen scale, shift, reverse, clear, copy and paste. The patterns and the chain are saved with the project and in preset files
 - Twelve effects on their own page, laid out in the order the sound runs through them: compressor, bitcrusher, distortion (tube, fold, crush; tube and fold run oversampled), trance gate with odd-meter patterns, chorus, flanger, phaser, tempo-synced ping-pong delay, reverb, three-band EQ with a movable mid band, kick duck and an output limiter, with a choice of order for distortion, gate, delay and reverb and an output level meter
 - Scales with quarter tones (Hijaz, Hijazkar, Nikriz, Rast, Ussak, Huseyni, Saba and more), with optional snap so every key plays a scale note
 - Pythagorean tuning (all twelve keys from pure fifths on the chosen root) in the same scale list

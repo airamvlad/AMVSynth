@@ -486,13 +486,86 @@ int main()
                    && std::abs (copy.steps[i].gate - pattern.steps[i].gate) < 0.002f && std::abs (copy.steps[i].velocity - pattern.steps[i].velocity) < 0.002f;
         check (same, "a sequencer pattern survives being saved as text");
 
-        // Switched off, it lets the notes through.
+        // Four patterns: the parameter chooses one, the lowest keys switch while playing, the chain plays them in turn.
+        {
+            SeqBank bank;
+            for (int i = 0; i < SeqBank::numPatterns; ++i)
+                for (auto& step : bank.patterns[(size_t) i].steps)
+                    step.note = i; // pattern A plays the key, B a semitone above, and so on
+            bank.chainFromString ("ACCB");
+
+            const auto notesOf = [&] (SeqParams bp, bool playing, int switchBlock = -1)
+            {
+                StepSequencer seq;
+                seq.prepare (48000.0);
+                bp.on = true;
+                bp.bank = &bank;
+                bp.length = 4;
+                bp.rate = 1;
+                std::vector<int> result;
+
+                for (int b = 0; b < 200; ++b)
+                {
+                    juce::MidiBuffer in, out;
+                    if (b == 0)
+                        in.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+                    if (b == switchBlock)
+                    {
+                        in.addEvent (juce::MidiMessage::noteOn (1, SeqBank::firstSwitchNote + 3, 1.0f), 0);
+                        in.addEvent (juce::MidiMessage::noteOff (1, SeqBank::firstSwitchNote + 3), 100);
+                    }
+
+                    TransportInfo t;
+                    t.playing = playing;
+                    t.bpm = 120.0;
+                    t.ppq = (double) (b * block) / 24000.0;
+                    seq.process (in, out, block, bp, t);
+                    for (const auto meta : out)
+                        if (meta.getMessage().isNoteOn())
+                            result.push_back (meta.getMessage().getNoteNumber() - 60);
+                }
+
+                return result;
+            };
+
+            const auto startsWith = [] (const std::vector<int>& got, std::initializer_list<int> expected)
+            {
+                return got.size() >= expected.size() && std::equal (expected.begin(), expected.end(), got.begin());
+            };
+
+            SeqParams chosen;
+            chosen.select = 2;
+            check (startsWith (notesOf (chosen, true), { 2, 2, 2, 2, 2, 2 }), "the pattern parameter chooses which pattern plays");
+
+            // The switch key arrives during step 4 (block 50 is sample 25600), so step 5 is the first of pattern D.
+            SeqParams switched;
+            switched.keySwitch = true;
+            const auto afterSwitch = notesOf (switched, true, 50);
+            check (startsWith (afterSwitch, { 0, 0, 0, 0, 0, 3, 3, 3 }) && std::count (afterSwitch.begin(), afterSwitch.end(), SeqBank::firstSwitchNote + 3 - 60) == 0,
+                   "a key switch changes the pattern on the next step and makes no sound");
+
+            SeqParams chained;
+            chained.chainOn = true;
+            check (startsWith (notesOf (chained, true), { 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0 }), "the chain plays its patterns one after the other and starts again");
+            check (startsWith (notesOf (chained, false), { 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0 }), "the chain also runs with the host stopped");
+
+            // Locked to the bar, every pattern of the chain lasts one 4/4 bar of sixteen steps.
+            chained.freeCycle = false;
+            const auto barred = notesOf (chained, true);
+            check (barred.size() > 17 && barred[15] == 0 && barred[16] == 2, "with the pattern locked to the bar the chain moves on every bar");
+
+            SeqBank chainCopy;
+            chainCopy.chainFromString (bank.chainToString());
+            check (chainCopy.chainLength == 4 && chainCopy.chain[1] == 2 && chainCopy.chain[3] == 1 && bank.chainToString() == "ACCB", "the chain survives being saved as text");
+        }
+
+        // Switched off, it lets the notesOf through.
         StepSequencer off;
         off.prepare (48000.0);
         juce::MidiBuffer in, out;
         in.addEvent (juce::MidiMessage::noteOn (1, 60, 0.7f), 5);
         off.process (in, out, block, SeqParams(), TransportInfo());
-        check (out.getNumEvents() == 1, "sequencer switched off passes the notes through");
+        check (out.getNumEvents() == 1, "sequencer switched off passes the notesOf through");
     }
 
     // Effects

@@ -397,17 +397,20 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
         addSection ("ODD-METER STEP SEQUENCER", true, 0, 1.0f).display = &stepEditor;
         addChildComponent (stepEditor);
 
-        auto& s = addSection ("SEQUENCER", true, 3, 5.5f);
+        auto& s = addSection ("SEQUENCER", true, 3, 5.0f);
         s.column.push_back (&makeToggle (id::seqOn, "SEQ ON", true)->button);
         s.column.push_back (&makeChoice (id::seqMeter, true)->box);
         s.column.push_back (&makeToggle (id::seqLatch, "LATCH", true)->button);
         s.column.push_back (&makeChoice (id::seqRate, true)->box);
         s.column.push_back (&makeToggle (id::seqFreeCycle, "FREE CYCLE", true)->button);
         s.columnsInColumn = 2;
-        s.columnWidth = 140;
+        s.columnWidth = 122;
         s.knobs = makeKnobs (true, { { id::seqSteps, "STEPS" }, { id::seqGate, "GATE" }, { id::seqSwing, "SWING" } });
 
-        const char* names[numSeqTools] { "1 BAR", "2 BARS", "ACCENTS", "RANDOM", "SHIFT <", "SHIFT >", "REVERSE", "CLEAR" };
+        addSection ("PATTERNS", true, 3, 3.1f).display = &patternBar;
+        addChildComponent (patternBar);
+
+        const char* names[numSeqTools] { "1 BAR", "2 BARS", "ACCENTS", "RANDOM", "SHIFT <", "SHIFT >", "REVERSE", "CLEAR", "COPY", "PASTE" };
         const char* tips[numSeqTools] { "Set STEPS to one bar of the chosen meter.",
                                         "Set STEPS to two bars of the chosen meter.",
                                         "Set the velocities from the meter: the first step of every group is loud.",
@@ -415,7 +418,9 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
                                         "Move the pattern one step to the left.",
                                         "Move the pattern one step to the right.",
                                         "Play the pattern backwards.",
-                                        "Put every step back to the key, without slides." };
+                                        "Put every step back to the key, without slides.",
+                                        "Remember the pattern that is shown.",
+                                        "Put the remembered pattern into the one that is shown, for example to make B a variation of A." };
         for (int i = 0; i < numSeqTools; ++i)
         {
             auto& button = seqButtons[(size_t) i];
@@ -435,13 +440,15 @@ AMVSynthAudioProcessorEditor::AMVSynthAudioProcessorEditor (AMVSynthAudioProcess
                     case seqShiftRight: stepEditor.shift (1); break;
                     case seqReverse:    stepEditor.reverse(); break;
                     case seqClear:      stepEditor.clear(); break;
+                    case seqCopy:       stepEditor.copy(); break;
+                    case seqPaste:      stepEditor.paste(); break;
                     default: break;
                 }
             };
             addChildComponent (button);
         }
 
-        auto& tools = addSection ("PATTERN TOOLS", true, 3, 4.5f);
+        auto& tools = addSection ("TOOLS", true, 3, 3.6f);
         for (auto& button : seqButtons)
             tools.column.push_back (&button);
         tools.columnsInColumn = 4;
@@ -919,6 +926,7 @@ void AMVSynthAudioProcessorEditor::timerCallback()
     updateModulationDisplay();
     sampleDisplay.refresh();
     stepEditor.refresh();
+    patternBar.refresh();
     updateSampleInfo();
 
     if (meterChanged && levelMeter.isVisible())
