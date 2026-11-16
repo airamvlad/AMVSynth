@@ -445,6 +445,53 @@ inline const std::vector<Preset>& getFactoryPresets()
             { scale, harmonicMinor }, { snap, 1 }, { mono, 0 }, { vibDepth, 0.0f }, { glide, 0.0f },
             { cutoff, 7000.0f }, { filterEnv, 0.1f }, { ampA, 1.0f }, { ampD, 900.0f }, { ampS, 0.0f }, { ampR, 500.0f },
             { delayOn, 1 }, { delayTime, 2 }, { delayMix, 18.0f }, { reverbOn, 1 }, { reverbSize, 0.5f }, { reverbMix, 18.0f } }, "Folk" },
+
+        { "Harmonika Chorus Wide", {
+            { level, -19.0f },
+            { model, accordion }, { accBellows, 0.85f }, { accMusette, 10.0f }, { accRegister, 0.6f }, { accClick, 0.3f },
+            { mono, 0 }, { vibDepth, 0.0f }, { glide, 0.0f }, { cutoff, 10000.0f }, { filterEnv, 0.0f },
+            { ampA, 15.0f }, { ampS, 1.0f }, { ampR, 120.0f }, { ornGrace, 1 }, { ornChance, 30.0f },
+            { chorusOn, 1 }, { chorusRate, 0.5f }, { chorusDepth, 55.0f }, { chorusMix, 60.0f },
+            { eqOn, 1 }, { eqLow, -3.0f }, { eqMid, 2.0f }, { eqMidFreq, 2200.0f }, { eqHigh, 3.0f },
+            { reverbOn, 1 }, { reverbSize, 0.4f }, { reverbMix, 16.0f } }, "Folk" },
+
+        { "Sargija Phaser", {
+            { level, -11.0f },
+            { model, sargija }, { sarPluck, 0.7f }, { sarDecay, 0.6f }, { sarDrone, 0.45f }, { sarTone, 0.75f },
+            { scale, hijaz }, { snap, 1 }, { mono, 0 }, { vibDepth, 0.0f }, { glide, 0.0f }, { cutoff, 9000.0f }, { filterEnv, 0.0f },
+            { phaserOn, 1 }, { phaserRate, 0.25f }, { phaserDepth, 75.0f }, { phaserFeedback, 60.0f }, { phaserMix, 55.0f },
+            { delayOn, 1 }, { delayTime, 2 }, { delayMix, 20.0f }, { reverbOn, 1 }, { reverbSize, 0.55f }, { reverbMix, 20.0f } }, "Folk" },
+
+        { "Flanger Acid 7/8 Seq", {
+            { level, -10.0f },
+            { engineLevel, 0.0f }, { oscATable, acid }, { oscAPos, 0.55f }, { oscALevel, 0.9f }, { subLevel, 0.2f },
+            { scale, hijazkar }, { snap, 1 }, { vibDepth, 0.0f }, { glide, 35.0f },
+            { cutoff, 800.0f }, { resonance, 0.6f }, { filterEnv, 0.5f }, { fltD, 140.0f }, { fltS, 0.0f }, { ampR, 70.0f },
+            { seqOn, 1 }, { seqMeter, m78b }, { seqRate, 1 }, { seqSteps, 14.0f }, { seqGate, 100.0f },
+            { flangerOn, 1 }, { flangerRate, 0.12f }, { flangerDepth, 70.0f }, { flangerFeedback, 70.0f }, { flangerMix, 55.0f },
+            { compOn, 1 }, { compThreshold, -20.0f }, { compRatio, 4.0f }, { compMakeup, 4.0f },
+            { distOn, 1 }, { distDrive, 9.0f }, { distMix, 50.0f }, { delayOn, 1 }, { delayTime, 2 }, { delayMix, 18.0f } },
+          "Sequence",
+          { { 0, 1.0f, 0.5f, false }, { 0, 0.5f, 0.4f, false }, { 4, 1.0f, 0.5f, true }, { 5, 0.6f, 0.4f, false }, { 7, 1.0f, 0.5f, false },
+            { 5, 0.5f, 0.4f, false }, { 4, 0.6f, 0.4f, false }, { 0, 1.0f, 0.5f, false }, { 12, 0.6f, 0.4f, false }, { 1, 1.0f, 0.5f, true },
+            { 0, 0.6f, 0.4f, false }, { -2, 1.0f, 0.6f, true }, { 0, 0.5f, 0.4f, false }, { 1, 0.6f, 0.4f, false } } },
+
+        { "Crushed Kanun", {
+            { level, -11.0f },
+            { model, kanun }, { kanPluck, 0.7f }, { kanDecay, 0.6f }, { kanShimmer, 0.5f },
+            { scale, nikriz }, { snap, 1 }, { mono, 0 }, { vibDepth, 0.0f }, { glide, 0.0f }, { cutoff, 12000.0f }, { filterEnv, 0.0f },
+            { crushOn, 1 }, { crushBits, 6.0f }, { crushRate, 9000.0f }, { crushMix, 70.0f },
+            { lfo (0, "Rate"), 0.3f }, { slot (0, "Source"), lfo1 }, { slot (0, "Dest"), mod::dstCrushRate }, { slot (0, "Amount"), 0.25f },
+            { delayOn, 1 }, { delayTime, 2 }, { delayFeedback, 50.0f }, { delayMix, 26.0f }, { reverbOn, 1 }, { reverbMix, 20.0f } }, "Folk" },
+
+        { "Punch Psy Bass", {
+            { level, -9.0f },
+            { engineLevel, 0.0f }, { oscATable, basic }, { oscAPos, 0.66f }, { oscALevel, 0.9f }, { oscAPitch, -12.0f }, { subLevel, 0.4f },
+            { vibDepth, 0.0f }, { glide, 0.0f },
+            { cutoff, 280.0f }, { resonance, 0.3f }, { filterEnv, 0.6f }, { fltA, 0.5f }, { fltD, 90.0f }, { fltS, 0.0f }, { fltR, 60.0f },
+            { ampA, 0.5f }, { ampD, 150.0f }, { ampS, 0.0f }, { ampR, 40.0f },
+            { compOn, 1 }, { compThreshold, -24.0f }, { compRatio, 6.0f }, { compAttack, 20.0f }, { compRelease, 80.0f }, { compMakeup, 6.0f },
+            { eqOn, 1 }, { eqLow, 3.0f }, { eqMid, -4.0f }, { eqMidFreq, 400.0f }, { eqHigh, 2.0f } }, "Bass" },
     };
 
     return presets;
